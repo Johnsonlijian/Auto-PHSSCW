@@ -1,0 +1,20 @@
+Auto-PHSSCW_ABAQUS_Repo/
+├── README.md               # Core guide: links code to manuscript chapters
+├── LICENSE                 # Apache-2.0 (matches manuscript’s legal license)
+├── CITATION.cff            # Cite both manuscript & code
+├── MANIFEST.md             # Full file list (transparency)
+├── requirements.md         # Code runtime env (matches manuscript 2.1)
+├── manuscript/             # Manuscript files
+│   └── Manuscript.docx     # Primary manuscript (your core file)
+├── code/                   # Abaqus Python code (matches manuscript 2.1/2.2)
+│   ├── Abaqus_update_totalshell.py          # Continuous wall (manuscript 2.1: totalshell.py)
+│   ├── Abaqus_update_totalshell_sepH.py     # Separated wall (manuscript 2.1: sepH.py)
+│   ├── Abaqus_update_totalshell_boltH.py    # Bolted wall (elastic, manuscript 2.1: boltH.py)
+│   ├── Abaqus_update_totalshellP.py         # Parametric batch (manuscript 2.1: totalshellP.py)
+│   ├── Abaqus_update_totalshellP_sepH.py    # Separated wall (plastic, manuscript 2.2)
+│   ├── Abaqus_update_totalshellP_boltH.py   # Bolted wall (plastic, manuscript 2.2)
+│   └── CODE_README.md      # Explains code-module mapping to manuscript
+└── example-results/        # Code output (verifies manuscript 3.1/3.2)
+    ├── Elastic_Buckling_Results.csv         # From totalshell.py (manuscript 3.1)
+    ├── PCA_Dimensionality_Data.csv          # From totalshellP.py (manuscript 3.2)
+    └── Bolted_Connection_Stress.tiff        # From boltH.py (manuscript 2.2)
