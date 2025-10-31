@@ -1,0 +1,26 @@
+# Auto-PHSSCW ABAQUS Repo Manifest  
+All files in this repository (as of [Date]):
+
+## Root Directory
+- README.md
+- LICENSE
+- CITATION.cff
+- MANIFEST.md
+- requirements.md
+
+## /manuscript
+- Manuscript.docx
+
+## /code
+- Abaqus_update_totalshell.py
+- Abaqus_update_totalshell_sepH.py
+- Abaqus_update_totalshell_boltH.py
+- Abaqus_update_totalshellP.py
+- Abaqus_update_totalshellP_sepH.py
+- Abaqus_update_totalshellP_boltH.py
+- CODE_README.md
+
+## /example-results
+- Elastic_Buckling_Results.csv
+- PCA_Dimensionality_Data.csv
+- Bolted_Connection_Stress.tiff
