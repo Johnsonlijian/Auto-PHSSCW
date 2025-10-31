@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "Please cite both the manuscript and code when using this work."
+authors:
+  - family-names: Ren
+    given-names: Lijian
+    affiliation: "College of Civil and Transportation Engineering, Hohai University, Nanjing 210098, China; College of Civil Engineering, Inner Mongolia University of Technology, Hohhot 010051, China"
+    email: renlijian@imut.edu.cn
+title: "Auto-PHSSCW ABAQUS: An Integrated, Python-Based Workflow for Automated Buckling-to-Collapse Analysis of H-Shaped Steel Composite Walls"
+version: 1.0
+date-released: "2024-XX-XX"  # Replace with your manuscript’s release date
+license: Apache-2.0
+repository-code: "https://github.com/[Your-GitHub-Username]/Auto-PHSSCW_ABAQUS_Repo"  # Replace with your repo URL after upload
+manuscript:
+  title: "Auto-PHSSCW ABAQUS: An Integrated, Python-Based Workflow for Automated Buckling-to-Collapse Analysis of H-Shaped Steel Composite Walls"
+  author: "Lijian Ren"
+  file: "manuscript/Manuscript.docx"
