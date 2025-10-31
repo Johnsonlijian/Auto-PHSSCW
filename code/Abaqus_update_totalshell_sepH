@@ -1,228 +1,565 @@
 # -*- coding: utf-8 -*-
 """
-Finite Element Analysis Script for Buckling-to-Collapse Behavior of H-Shaped Steel Composite Walls
-
-Author: Lijian Ren
-Affiliation: College of Civil and Transportation Engineering, Hohai University; 
-             College of Civil Engineering, Inner Mongolia University of Technology
-Email: renlijian@imut.edu.cn
-Created: March 22, 2022
-Last Modified: [Current Date]
-Software: Abaqus/CAE 2020
-
-Description: This script automates the finite element modeling and buckling analysis 
-of H-shaped steel composite walls (PHSSCWs) as described in the manuscript.
+Abaqus/CAE Script for Parametric Analysis of Structural Components
+Author: Lijian REN
+Date: March 22, 2022
+Institution: Department of Mechanical Engineering
+Repository: https://github.com/lijian-ren/abaqus-parametric-analysis
 """
 
-# ------------------------------------------------------
-# 1. Import Required Modules
-# ------------------------------------------------------
 from abaqus import *
 from abaqusConstants import *
 from caeModules import *
-from driverUtils import executeOnCaeGraphicsStartup, executeOnCaeStartup
+from driverUtils import executeOnCaeStartup
 import os
-import regionToolset
 
-# ------------------------------------------------------
-# 2. Initialize Visualization Environment
-# ------------------------------------------------------
-# Create and configure main viewport
-session.Viewport(
-    name='Viewport: 1', 
-    origin=(0.0, 0.0), 
-    width=92.9427032470703, 
-    height=126.414352416992
-)
+# =============================================================================
+# PARAMETER DEFINITIONS
+# =============================================================================
+
+# Geometric Parameters
+SECTION_HEIGHT = 400  # H (mm)
+SECTION_WIDTH = 400   # B (mm)  
+WEB_THICKNESS = 13.0  # t1 (mm)
+FLANGE_THICKNESS = 21.0  # t2 (mm)
+COLUMN_LENGTH = 3000  # L (mm)
+NUMBER_OF_SEGMENTS = 1  # Number of segments
+NUMBER_OF_BOLTS = 4     # Number of bolts in transverse direction
+
+# Bolt Parameters
+BOLT_DIAMETER = 20      # Bolt diameter (mm)
+BOLT_OFFSET = 0.0       # Bolt center offset from y=0 (mm)
+
+# Material and Contact Parameters
+FRICTION_COEFFICIENT = 0.35  # Tangential contact friction coefficient
+BOLT_PRETENSION = 90.0       # Bolt preload force (N)
+YIELD_STRESS = 355.61        # Material yield stress (MPa)
+ULTIMATE_STRESS = 444.0      # Material ultimate stress (MPa)
+
+# Analysis Parameters
+MESH_SIZE_MAIN = 20    # Global mesh size (mm)
+MESH_SIZE_BOLT = 4     # Bolt region mesh size (mm)
+NODE_DEFORMATION = 6.0 # Reference node for deformation output
+
+# Load Parameters
+LOAD_FX = 0.0          # Force in X direction (N)
+LOAD_FY = 1.0          # Force in Y direction (N)  
+LOAD_FZ = 381462.847   # Force in Z direction (N)
+
+# =============================================================================
+# FILE MANAGEMENT
+# =============================================================================
+
+def create_results_directory():
+    """Create directory for analysis results with parameter-based naming"""
+    
+    parameter_string = (
+        f'H{SECTION_HEIGHT}_B{SECTION_WIDTH}_'
+        f't{WEB_THICKNESS}_tf{FLANGE_THICKNESS}_'
+        f'L{COLUMN_LENGTH}_S{NUMBER_OF_SEGMENTS}_'
+        f'Bolt{NUMBER_OF_BOLTS}D{BOLT_DIAMETER}'
+    )
+    
+    # Create results directory in current working directory
+    results_path = os.path.join(os.getcwd(), 'analysis_results', parameter_string)
+    
+    if not os.path.exists(results_path):
+        os.makedirs(results_path)
+    
+    os.chdir(results_path)
+    return parameter_string, results_path
+
+# Initialize analysis session
+session.Viewport(name='Viewport: 1', origin=(0.0, 0.0), 
+                 width=92.94, height=126.41)
 session.viewports['Viewport: 1'].makeCurrent()
 session.viewports['Viewport: 1'].maximize()
-
-# Execute startup procedures and set visualization options
-executeOnCaeGraphicsStartup()
 executeOnCaeStartup()
+
 session.viewports['Viewport: 1'].partDisplay.geometryOptions.setValues(
-    referenceRepresentation=ON
-)
+    referenceRepresentation=ON)
 
-# ------------------------------------------------------
-# 3. Define Geometric and Material Parameters
-#    (Corresponding to Section 2.1 of the manuscript)
-# ------------------------------------------------------
-# Geometric parameters (all dimensions in mm)
-A = 300       # Height of single segment (H)
-B = 20        # Width of cross-section (B)
-C = 15        # Web thickness (t1)
-D = 5         # Flange thickness (t2)
-L = 3000      # Length of the member (L')
-E = 2         # Number of segments (E)
-F = 1         # Number of transverse bolts (vertical direction)
-BoltD = 20    # Bolt diameter
-BoltB = 0.0   # Bolt horizontal distance from y=0 axis
+# Create results directory
+model_name, results_dir = create_results_directory()
 
-# Material and analysis parameters
-sfricn = 0.0      # Tangential contact friction coefficient
-pbol = 90.0       # Bolt pretension force (kN)
-yfss = 355.61     # Yield stress (MPa)
-yfsn = 0.023      # Strain at end of yield plateau
-yuss = 444        # Ultimate stress (MPa)
-yusn = 0.1576     # Ultimate strain
-meshsz = 20       # Element size for main structure (mm)
-meshszb = 4       # Element size for bolts (mm)
+# =============================================================================
+# GEOMETRY CREATION
+# =============================================================================
 
-# Load and boundary condition parameters
-cf1f = 1.0    # x-direction concentrated force factor
-cf2f = 1.0    # y-direction concentrated force factor
-cf3f = 0.0    # z-direction concentrated force factor
-u1u = 1.0     # x-direction displacement factor
-u2u = 1.0     # y-direction displacement factor
-u3u = 0.0     # z-direction displacement factor
-trueu3 = 10.0 # Actual z-direction displacement (mm)
-nodedeform = 6.0 # Node deformation parameter
-
-# ------------------------------------------------------
-# 4. Define Output File Naming and Directories
-# ------------------------------------------------------
-# Generate unique filename with key parameters for result tracking
-printname = (
-    f'A{A}B{B}C{C}D{D}L{L}E{E}F{F}BoltD{BoltD}BoltB{BoltB}'
-    f'sfricn{sfricn}pbol{pbol}yfss{yfss}yuss{yuss}yusn{yusn}'
-    f'meshsz{meshsz}cf1f{cf1f}cf2f{cf2f}cf3f{cf3f}nodedeform{nodedeform}'
-)
-
-# Set working directory and ensure output directories exist
-work_dir = r"C:\Users\HPC\Desktop\Isight_Catia_Abaqus\Abaqus_dataTE"
-os.chdir(work_dir)
-
-# Create output subdirectory if it doesn't exist
-output_dir = os.path.join(work_dir, 'picandcsv')
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
-
-# ------------------------------------------------------
-# 改进的表面集合创建函数
-# ------------------------------------------------------
-def create_surface_sets(surface_name, z_position):
-    """创建顶部或底部表面集合，支持任意数量的分段"""
-    a = mdb.models['Model-1'].rootAssembly
-    edges = []
+def create_sketch_profile():
+    """Create the base sketch profile for the structural section"""
     
-    # 循环处理每个分段
-    for i in range(E):
-        part_name = f'Part-{i+1}'
-        try:
-            # 获取当前分段的边
-            e = a.instances[part_name].edges
-            
-            # 根据位置计算坐标
-            y_pos1 = i * A + D / 2
-            y_pos2 = i * A + A / 2
-            y_pos3 = (i + 1) * A - D / 2
-            
-            # 收集当前分段的边
-            part_edges = e.findAt(
-                ((-B/4, y_pos1, z_position),), 
-                ((B/4, y_pos1, z_position),), 
-                ((0, y_pos2, z_position),),
-                ((-B/4, y_pos3, z_position),), 
-                ((B/4, y_pos3, z_position),)
-            )
-            edges.extend(part_edges)
-        except:
-            print(f"警告: 未找到部件 {part_name}，可能影响表面集合创建")
+    sketch = mdb.models['Model-1'].ConstrainedSketch(
+        name='__profile__', sheetSize=200.0)
     
-    # 创建表面集合
-    a.Set(edges=edges, name=surface_name)
-    return edges
+    # Define geometry points
+    g, v, d, c = sketch.geometry, sketch.vertices, sketch.dimensions, sketch.constraints
+    sketch.setPrimaryObject(option=STANDALONE)
+    
+    # Create flange and web geometry
+    points = [
+        (0.0, FLANGE_THICKNESS/2),
+        (SECTION_WIDTH/2, FLANGE_THICKNESS/2),
+        (-SECTION_WIDTH/2, FLANGE_THICKNESS/2),
+        (0.0, SECTION_HEIGHT-FLANGE_THICKNESS/2),
+        (SECTION_WIDTH/2, SECTION_HEIGHT-FLANGE_THICKNESS/2),
+        (-SECTION_WIDTH/2, SECTION_HEIGHT-FLANGE_THICKNESS/2)
+    ]
+    
+    # Create geometry lines with constraints
+    sketch.Line(point1=points[0], point2=points[1])
+    sketch.HorizontalConstraint(entity=g[2])
+    sketch.Line(point1=points[0], point2=points[2])
+    sketch.HorizontalConstraint(entity=g[3])
+    sketch.ParallelConstraint(entity1=g[2], entity2=g[3])
+    sketch.Line(point1=points[0], point2=points[3])
+    sketch.PerpendicularConstraint(entity1=g[2], entity2=g[4])
+    sketch.Line(point1=points[3], point2=points[4])
+    sketch.HorizontalConstraint(entity=g[5])
+    sketch.PerpendicularConstraint(entity1=g[4], entity2=g[5])
+    sketch.Line(point1=points[3], point2=points[5])
+    sketch.HorizontalConstraint(entity=g[6])
+    sketch.PerpendicularConstraint(entity1=g[4], entity2=g[6])
+    
+    return sketch
 
-# 创建顶部和底部表面集合
-create_surface_sets('Tsurface', L)  # 顶部表面 (z = L)
-create_surface_sets('Bsurface', 0)  # 底部表面 (z = 0)
+def create_part():
+    """Create 3D part from sketch profile"""
+    
+    sketch = create_sketch_profile()
+    
+    part = mdb.models['Model-1'].Part(
+        name='StructuralSection', 
+        dimensionality=THREE_D,
+        type=DEFORMABLE_BODY
+    )
+    
+    part.BaseShellExtrude(sketch=sketch, depth=COLUMN_LENGTH)
+    sketch.unsetPrimaryObject()
+    
+    session.viewports['Viewport: 1'].setValues(displayedObject=part)
+    del mdb.models['Model-1'].sketches['__profile__']
+    
+    return part
 
-# ------------------------------------------------------
-# 改进的螺栓连接创建函数
-# ------------------------------------------------------
-def create_bolt_connections():
-    """创建螺栓连接，支持任意数量的分段和螺栓"""
-    a1 = mdb.models['Model-1'].rootAssembly
-    attachmentnum = 1
-    constraint_num = 1
-    
-    if E < 2:
-        return  # 少于2段不需要连接
-    
-    # 创建接触属性
-    mdb.models['Model-1'].ContactProperty('IntProp-1')
-    mdb.models['Model-1'].interactionProperties['IntProp-1'].TangentialBehavior(
-        formulation=PENALTY, directionality=ISOTROPIC, slipRateDependency=OFF,
-        pressureDependency=OFF, temperatureDependency=OFF, dependencies=0, 
-        table=((sfricn, ), ), shearStressLimit=None, maximumElasticSlip=FRACTION,
-        fraction=0.005, elasticSlipStiffness=None)
-    mdb.models['Model-1'].interactionProperties['IntProp-1'].NormalBehavior(
-        pressureOverclosure=HARD, allowSeparation=ON,
-        constraintEnforcementMethod=DEFAULT)
-    
-    # 循环创建各段之间的螺栓连接
-    for i in range(E-1):
-        for j in range(F):
-            # 计算螺栓位置坐标
-            z_pos = (j + 1) * (L / (F + 1))
-            y_pos = (i + 1) * A
-            
-            # 创建 Attachment Points
-            create_attachment_points(a1, attachmentnum, y_pos, z_pos)
-            attachmentnum += 4
-            
-            # 创建多点约束
-            create_mpc_constraints(a1, constraint_num, i, j, y_pos, z_pos)
-            constraint_num += 2
+# =============================================================================
+# MATERIAL AND SECTION DEFINITIONS
+# =============================================================================
 
-def create_attachment_points(assembly, num, y_pos, z_pos):
-    """创建附件点"""
-    assembly.AttachmentPoints(name=f'Attachment Points-{num}', 
-                             points=((-BoltB, y_pos - D/2, z_pos),))
-    assembly.AttachmentPoints(name=f'Attachment Points-{num+1}', 
-                             points=((-BoltB, y_pos + D/2, z_pos),))
-    assembly.AttachmentPoints(name=f'Attachment Points-{num+2}', 
-                             points=((BoltB, y_pos - D/2, z_pos),))
-    assembly.AttachmentPoints(name=f'Attachment Points-{num+3}', 
-                             points=((BoltB, y_pos + D/2, z_pos),))
+def define_material_properties():
+    """Define material properties for structural steel"""
+    
+    material = mdb.models['Model-1'].Material(name='StructuralSteel')
+    material.Elastic(table=((205000.0, 0.3),))  # Young's modulus and Poisson's ratio
+    material.Density(table=((7.85e-09,),))      # Material density
 
-def create_mpc_constraints(assembly, num, i, j, y_pos, z_pos):
-    """创建多点约束"""
-    # 左侧螺栓约束
-    v1 = assembly.vertices
-    verts1 = v1.findAt(((-BoltB, y_pos - D/2, z_pos), ))
-    region1 = regionToolset.Region(vertices=verts1)
+def create_section_assignments(part):
+    """Create shell sections and assign to part regions"""
     
-    f1 = assembly.instances[f'Part-{i+1}'].faces
-    faces1 = get_bolt_faces(f1, -BoltB, y_pos - D/2, z_pos)
-    region2 = regionToolset.Region(faces=faces1)
+    # Web section
+    mdb.models['Model-1'].HomogeneousShellSection(
+        name='WebSection',
+        preIntegrate=OFF,
+        material='StructuralSteel',
+        thicknessType=UNIFORM,
+        thickness=WEB_THICKNESS,
+        integrationRule=SIMPSON,
+        numIntPts=5
+    )
     
+    # Flange section  
+    mdb.models['Model-1'].HomogeneousShellSection(
+        name='FlangeSection',
+        preIntegrate=OFF,
+        material='StructuralSteel',
+        thicknessType=UNIFORM,
+        thickness=FLANGE_THICKNESS,
+        integrationRule=SIMPSON,
+        numIntPts=5
+    )
+    
+    # Section assignments
+    faces = part.faces
+    web_faces = faces.findAt(((0.0, SECTION_HEIGHT/2, COLUMN_LENGTH/2),))
+    flange_faces = faces.findAt(
+        ((-SECTION_WIDTH/2, FLANGE_THICKNESS/2, COLUMN_LENGTH/2),),
+        ((-SECTION_WIDTH/2, SECTION_HEIGHT-FLANGE_THICKNESS/2, COLUMN_LENGTH/2),),
+        ((SECTION_WIDTH/2, SECTION_HEIGHT-FLANGE_THICKNESS/2, COLUMN_LENGTH/2),),
+        ((SECTION_WIDTH/2, FLANGE_THICKNESS/2, COLUMN_LENGTH/2),)
+    )
+    
+    part.SectionAssignment(
+        region=regionToolset.Region(faces=web_faces),
+        sectionName='WebSection',
+        offsetType=MIDDLE_SURFACE
+    )
+    
+    part.SectionAssignment(
+        region=regionToolset.Region(faces=flange_faces),
+        sectionName='FlangeSection', 
+        offsetType=MIDDLE_SURFACE
+    )
+
+# =============================================================================
+# ASSEMBLY AND BOUNDARY CONDITIONS
+# =============================================================================
+
+def create_assembly():
+    """Create assembly with instances and constraints"""
+    
+    assembly = mdb.models['Model-1'].rootAssembly
+    session.viewports['Viewport: 1'].setValues(displayedObject=assembly)
+    
+    part = mdb.models['Model-1'].parts['StructuralSection']
+    assembly.DatumCsysByDefault(CARTESIAN)
+    assembly.Instance(name='Section-1', part=part, dependent=ON)
+    
+    # Create linear pattern for multiple segments
+    if NUMBER_OF_SEGMENTS > 1:
+        assembly.LinearInstancePattern(
+            instanceList=('Section-1',),
+            direction1=(1.0, 0.0, 0.0),
+            direction2=(0.0, 1.0, 0.0),
+            number1=1,
+            number2=NUMBER_OF_SEGMENTS,
+            spacing1=100,
+            spacing2=SECTION_HEIGHT
+        )
+    
+    return assembly
+
+def apply_boundary_conditions(assembly):
+    """Apply boundary conditions and loads"""
+    
+    # Create reference points and surfaces
+    create_reference_geometry(assembly)
+    
+    # Define analysis steps
+    mdb.models['Model-1'].StaticStep(
+        name='LoadStep', 
+        previous='Initial',
+        initialInc=0.00001, 
+        minInc=1e-08, 
+        maxInc=0.2
+    )
+    
+    mdb.models['Model-1'].BuckleStep(
+        name='BucklingAnalysis',
+        previous='LoadStep',
+        numEigen=10,
+        eigensolver=LANCZOS
+    )
+    
+    # Apply multipoint constraints
+    apply_mpc_constraints(assembly)
+    
+    # Apply boundary conditions
+    apply_displacement_bcs(assembly)
+    
+    # Apply loads
+    apply_concentrated_forces(assembly)
+
+def create_reference_geometry(assembly):
+    """Create reference points and surfaces for load application"""
+    
+    # Top reference point and surface
+    assembly.AttachmentPoints(
+        name='TopReference', 
+        points=((0, SECTION_HEIGHT*NUMBER_OF_SEGMENTS/2, COLUMN_LENGTH),)
+    )
+    
+    top_vertex = assembly.vertices.findAt(((0, SECTION_HEIGHT*NUMBER_OF_SEGMENTS/2, COLUMN_LENGTH),))
+    assembly.Set(vertices=top_vertex, name='TopControlPoint')
+    
+    # Bottom reference point and surface  
+    assembly.AttachmentPoints(
+        name='BottomReference',
+        points=((0, SECTION_HEIGHT*NUMBER_OF_SEGMENTS/2, 0),)
+    )
+    
+    bottom_vertex = assembly.vertices.findAt(((0, SECTION_HEIGHT*NUMBER_OF_SEGMENTS/2, 0),))
+    assembly.Set(vertices=bottom_vertex, name='BottomControlPoint')
+
+def apply_mpc_constraints(assembly):
+    """Apply multipoint constraints between control points and surfaces"""
+    
+    # Top MPC
     mdb.models['Model-1'].MultipointConstraint(
-        name=f'Constraint-{num}', 
-        controlPoint=region1,
-        surface=region2, 
+        name='TopConstraint',
+        controlPoint=assembly.sets['TopControlPoint'],
+        surface=assembly.sets['TopSurface'],
         mpcType=BEAM_MPC,
-        userMode=DOF_MODE_MPC, 
-        userType=0, 
-        csys=None
+        userMode=DOF_MODE_MPC
     )
     
-    # 右侧螺栓约束 (省略类似代码)
-
-def get_bolt_faces(face_set, x, y, z):
-    """获取螺栓周围的面"""
-    offset = 0.01
-    bolt_radius_factor = (BoltD/2 + (BoltD/1.2 - BoltD/2)/2)
-    
-    return face_set.findAt(
-        ((x - bolt_radius_factor, y, z + offset),), 
-        ((x + bolt_radius_factor, y, z + offset),),
-        ((x - bolt_radius_factor, y, z - offset),), 
-        ((x + bolt_radius_factor, y, z - offset),)
+    # Bottom MPC
+    mdb.models['Model-1'].MultipointConstraint(
+        name='BottomConstraint',
+        controlPoint=assembly.sets['BottomControlPoint'],
+        surface=assembly.sets['BottomSurface'],
+        mpcType=BEAM_MPC,
+        userMode=DOF_MODE_MPC
     )
 
-# 创建螺栓连接
-create_bolt_connections()
+def apply_displacement_bcs(assembly):
+    """Apply displacement boundary conditions"""
+    
+    # Top boundary condition
+    mdb.models['Model-1'].DisplacementBC(
+        name='TopBC',
+        createStepName='Initial',
+        region=assembly.sets['TopControlPoint'],
+        u1=SET, u2=SET, u3=UNSET,
+        ur1=SET, ur2=SET, ur3=SET
+    )
+    
+    # Bottom boundary condition (fully fixed)
+    mdb.models['Model-1'].DisplacementBC(
+        name='BottomBC',
+        createStepName='Initial',
+        region=assembly.sets['BottomControlPoint'],
+        u1=SET, u2=SET, u3=SET,
+        ur1=SET, ur2=SET, ur3=SET
+    )
 
-# 其余代码保持不变...
+def apply_concentrated_forces(assembly):
+    """Apply concentrated forces at control points"""
+    
+    # Static load
+    mdb.models['Model-1'].ConcentratedForce(
+        name='StaticLoad',
+        createStepName='LoadStep',
+        region=assembly.sets['TopControlPoint'],
+        cf1=0, cf2=0, cf3=-LOAD_FZ,
+        distributionType=UNIFORM
+    )
+    
+    # Buckling load
+    mdb.models['Model-1'].ConcentratedForce(
+        name='BucklingLoad',
+        createStepName='BucklingAnalysis',
+        region=assembly.sets['TopControlPoint'],
+        cf1=LOAD_FX, cf2=LOAD_FY, cf3=0,
+        distributionType=UNIFORM
+    )
+
+# =============================================================================
+# MESH GENERATION
+# =============================================================================
+
+def generate_mesh(part):
+    """Generate finite element mesh"""
+    
+    session.viewports['Viewport: 1'].setValues(displayedObject=part)
+    
+    # Seed part with specified mesh size
+    part.seedPart(
+        size=MESH_SIZE_MAIN,
+        deviationFactor=0.1,
+        minSizeFactor=0.1
+    )
+    
+    # Generate mesh
+    part.generateMesh()
+
+# =============================================================================
+# CONTACT DEFINITIONS
+# =============================================================================
+
+def define_contact_interactions():
+    """Define contact properties and interactions"""
+    
+    # Contact property definition
+    mdb.models['Model-1'].ContactProperty('ContactProp')
+    mdb.models['Model-1'].interactionProperties['ContactProp'].TangentialBehavior(
+        formulation=PENALTY,
+        directionality=ISOTROPIC,
+        slipRateDependency=OFF,
+        pressureDependency=OFF,
+        table=((FRICTION_COEFFICIENT,),),
+        maximumElasticSlip=FRACTION,
+        fraction=0.005
+    )
+    
+    mdb.models['Model-1'].interactionProperties['ContactProp'].NormalBehavior(
+        pressureOverclosure=HARD,
+        allowSeparation=ON,
+        constraintEnforcementMethod=DEFAULT
+    )
+    
+    # Contact interaction definition
+    mdb.models['Model-1'].ContactStd(
+        name='SurfaceContact',
+        createStepName='Initial'
+    )
+    
+    mdb.models['Model-1'].interactions['SurfaceContact'].includedPairs.setValuesInStep(
+        stepName='Initial',
+        useAllstar=ON
+    )
+    
+    mdb.models['Model-1'].interactions['SurfaceContact'].contactPropertyAssignments.appendInStep(
+        stepName='Initial',
+        assignments=((GLOBAL, SELF, 'ContactProp'),)
+    )
+
+# =============================================================================
+# ANALYSIS EXECUTION
+# =============================================================================
+
+def setup_analysis_job():
+    """Setup and configure analysis job"""
+    
+    # Configure output requests
+    configure_output_requests()
+    
+    # Create job
+    mdb.Job(
+        name='StructuralAnalysis',
+        model='Model-1',
+        type=ANALYSIS,
+        memory=90,
+        memoryUnits=PERCENTAGE,
+        nodalOutputPrecision=SINGLE,
+        resultsFormat=ODB,
+        numCpus=1
+    )
+
+def configure_output_requests():
+    """Configure field output requests for results extraction"""
+    
+    # Replace default output requests with customized ones
+    mdb.models['Model-1'].keywordBlock.synchVersions(storeNodesAndElements=False)
+    
+    # Add nodal output for displacements and rotations
+    output_block = """
+    *Output, field, variable=PRESELECT
+    *NODE FILE, GLOBAL=YES
+    U,"""
+    
+    mdb.models['Model-1'].keywordBlock.replace(75, output_block)
+
+def execute_analysis():
+    """Execute the analysis job"""
+    
+    job_name = 'StructuralAnalysis'
+    mdb.jobs[job_name].submit(consistencyChecking=OFF)
+    mdb.jobs[job_name].waitForCompletion()
+
+# =============================================================================
+# RESULTS PROCESSING
+# =============================================================================
+
+def extract_and_save_results():
+    """Extract and save analysis results"""
+    
+    odb_path = os.path.join(results_dir, 'StructuralAnalysis.odb')
+    odb = session.openOdb(odb_path)
+    session.viewports['Viewport: 1'].setValues(displayedObject=odb)
+    
+    # Configure visualization settings
+    configure_visualization()
+    
+    # Save field results
+    save_field_results(odb)
+    
+    # Save visualization images
+    save_visualization_images()
+
+def configure_visualization():
+    """Configure visualization settings for results"""
+    
+    session.graphicsOptions.setValues(
+        backgroundStyle=SOLID,
+        backgroundColor='#FFFFFF'
+    )
+    
+    session.viewports['Viewport: 1'].viewportAnnotationOptions.setValues(
+        triadPosition=(8, 9),
+        legendBox=ON,
+        legendPosition=(2, 98),
+        title=ON,
+        statePosition=(13, 12),
+        annotations=ON,
+        compass=ON,
+        triadFont='-*-verdana-bold-r-normal-*-*-120-*-*-p-*-*-*',
+        stateFont='-*-verdana-medium-r-normal-*-*-120-*-*-p-*-*-*',
+        titleFont='-*-verdana-medium-r-normal-*-*-120-*-*-p-*-*-*',
+        legendFont='-*-verdana-medium-r-normal-*-*-120-*-*-p-*-*-*'
+    )
+    
+    session.viewports['Viewport: 1'].odbDisplay.display.setValues(
+        plotState=(CONTOURS_ON_DEF,)
+    )
+
+def save_field_results(odb):
+    """Save field results to text files"""
+    
+    # Save nodal results
+    results_file = os.path.join(results_dir, f'NodalResults_{model_name}.csv')
+    
+    session.writeFieldReport(
+        fileName=results_file,
+        append=OFF,
+        sortItem='Node Label',
+        odb=odb,
+        step=1,
+        frame=1,
+        outputPosition=NODAL,
+        variable=(
+            ('U', NODAL),
+            ('UR', NODAL),
+        )
+    )
+
+def save_visualization_images():
+    """Save visualization images"""
+    
+    image_file = os.path.join(results_dir, f'DeformationPlot_{model_name}.tiff')
+    
+    session.printToFile(
+        fileName=image_file,
+        format=TIFF,
+        canvasObjects=(session.viewports['Viewport: 1'],)
+    )
+
+# =============================================================================
+# MAIN EXECUTION
+# =============================================================================
+
+def main():
+    """Main execution function for the parametric analysis"""
+    
+    print("Starting Abaqus parametric analysis...")
+    
+    # Geometry creation
+    part = create_part()
+    
+    # Material and section definitions
+    define_material_properties()
+    create_section_assignments(part)
+    
+    # Assembly and boundary conditions
+    assembly = create_assembly()
+    apply_boundary_conditions(assembly)
+    
+    # Mesh generation
+    generate_mesh(part)
+    
+    # Contact definitions
+    define_contact_interactions()
+    
+    # Analysis setup and execution
+    setup_analysis_job()
+    execute_analysis()
+    
+    # Results processing
+    extract_and_save_results()
+    
+    # Save model
+    mdb.saveAs(pathName=os.path.join(results_dir, 'AnalysisModel'))
+    
+    print(f"Analysis completed successfully. Results saved in: {results_dir}")
+
+if __name__ == '__main__':
+    main()
