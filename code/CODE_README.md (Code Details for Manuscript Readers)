@@ -2,7 +2,8 @@
 This folder contains all Python scripts for Auto-PHSSCW ABAQUS, as described in Section 2.1 ("Software architecture") of `manuscript/Manuscript.docx`.
 
 ## 1. Continuous Wall Scripts  
-- `Abaqus_update_totalshell.py`: Handles monolithic H-shaped walls. Executes the full workflow: geometry → meshing (S4R elements) → eigen-buckling → imperfection injection → Static-Riks collapse (Section 2.2).  
+- `Abaqus_update_totalshell.py`: Handles intergal H-shaped walls. Executes the full workflow: geometry → meshing (S4R elements) → eigen-buckling → imperfection injection → Static-Riks collapse (Section 2.2).  
+- `Abaqus_update_totalshellP.py`: Plastic analysis for intergal H-shaped walls. Uses elastic-plastic material (multi-linear isotropic hardening) (Section 2.2: Material Modeling).  
 
 ## 2. Separated Wall Scripts  
 - `Abaqus_update_totalshell_sepH.py`: Models walls with separated components. Adds surface-to-surface contact (friction coefficient configurable via `sfricn` parameter) (Section 2.2: Advanced Connection Modeling).  
@@ -12,8 +13,6 @@ This folder contains all Python scripts for Auto-PHSSCW ABAQUS, as described in 
 - `Abaqus_update_totalshell_boltH.py`: Elastic analysis for bolted splices. Automates bolt hole creation, pretension (parameter `pbol`), and penalty-based contact (Section 2.2: Bolted Connections).  
 - `Abaqus_update_totalshellP_boltH.py`: Plastic analysis for bolted splices. Extends elastic model to post-buckling collapse (Section 2.2: Automated Buckling-to-Collapse Workflow).  
 
-## 4. Batch/Parametric Script  
-- `Abaqus_update_totalshellP.py`: Parametric wrapper for high-throughput runs. Loops over geometric/load parameters (e.g., H=200–500 mm, L=2000–4000 mm), organizes output directories, and generates datasets for ML (Section 1: >140k simulations) (Section 3.2: PCA analysis).  
 
 ## Key Notes  
 - All scripts use **keyword manipulation** (e.g., `mdb.models['Model-X'].keywordBlock`) for imperfection injection (Section 2.1: Low-Level Abaqus Interaction).  
