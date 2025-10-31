@@ -1,0 +1,1201 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Finite Element Analysis of Bolted Steel Connections
+Author: Lijian REN
+Date: July 15, 2023
+
+This script performs a finite element analysis of bolted steel connections
+using Abaqus/CAE. It models the structural behavior, applies boundary conditions,
+and analyzes the results.
+
+Keywords: Finite Element Analysis, Bolted Connections, Steel Structures, Abaqus
+"""
+
+from abaqus import *
+from abaqusConstants import *
+import os
+
+# ============================================
+# Configuration Parameters
+# ============================================
+H = 1000  # Height of the section
+B = 300   # Width of the section
+t1 = 19.0  # Thickness of web
+t2 = 36.0  # Thickness of flange
+L = 3000   # Length of the section
+num_segments = 6  # Number of segments
+num_bolts_vertical = 1  # Number of bolts in vertical direction
+bolt_diameter = 20     # Bolt diameter
+bolt_distance = 56     # Bolt center distance from y=0
+friction_coef = 0.35   # Tangential contact friction coefficient
+bolt_preload = 125000.0  # Bolt preload force
+yield_stress = 355.61  # Yield stress
+yield_strain = 0.023   # Yield strain at the end of platform
+ultimate_stress = 444.0  # Ultimate stress
+ultimate_strain = 0.1576  # Ultimate strain
+mesh_size = 40    # Mesh size
+bolt_mesh_size = 4    # Bolt mesh size
+load_x = 1.0  # Load component in x-direction
+load_y = 1.0  # Load component in y-direction
+load_z = 0.0  # Load component in z-direction
+disp_x = 1.0  # Displacement component in x-direction
+disp_y = 1.0  # Displacement component in y-direction
+disp_z = 0.0  # Displacement component in z-direction
+imperfection_factor = 0.01  # Imperfection factor
+true_displacement = 60.0  # True displacement
+node_deformation = 6.0  # Node deformation
+
+# ============================================
+# File Paths and Naming
+# ============================================
+# Create a unique identifier for the analysis
+analysis_id = f"H{H}B{B}t1{t1}t2{t2}L{L}S{num_segments}B{num_bolts_vertical}D{bolt_diameter}BD{bolt_distance}F{friction_coef}P{bolt_preload}Y{yield_stress}U{ultimate_stress}US{ultimate_strain}MS{mesh_size}LF{load_x}LF{load_y}LF{load_z}IF{imperfection_factor}"
+
+# Define output directory - GitHub compatible path
+output_dir = os.path.join(os.getcwd(), 'results')
+analysis_dir = os.path.join(output_dir, analysis_id)
+
+# Create directory if it doesn't exist
+if not os.path.exists(analysis_dir):
+    os.makedirs(analysis_dir)
+
+# Change to the analysis directory
+os.chdir(analysis_dir)
+
+# ============================================
+# Model Creation
+# ============================================
+def create_model():
+    """Create the Abaqus model for the bolted connection analysis"""
+    
+    # Create a new viewport
+    session.Viewport(name='Viewport: 1', origin=(0.0, 0.0), width=92.9427032470703, height=126.414352416992)
+    session.viewports['Viewport: 1'].makeCurrent()
+    session.viewports['Viewport: 1'].maximize()
+    
+    # Create a new model
+    model_name = 'Model-1'
+    model = mdb.Model(name=model_name)
+    
+    # Set reference representation
+    session.viewports['Viewport: 1'].partDisplay.geometryOptions.setValues(referenceRepresentation=ON)
+    
+    return model
+
+# ============================================
+# Geometry Creation
+# ============================================
+def create_geometry(model):
+    """Create the geometry for the bolted connection"""
+    
+    # Create sketch for the profile
+    sketch = model.ConstrainedSketch(name='__profile__', sheetSize=200.0)
+    g, v, d, c = sketch.geometry, sketch.vertices, sketch.dimensions, sketch.constraints
+    sketch.setPrimaryObject(option=STANDALONE)
+    
+    # Create the profile geometry
+    sketch.Line(point1=(0.0, t2/2), point2=(B/2, t2/2))
+    sketch.HorizontalConstraint(entity=g[2], addUndoState=False)
+    sketch.Line(point1=(0.0, t2/2), point2=(-B/2, t2/2))
+    sketch.HorizontalConstraint(entity=g[3], addUndoState=False)
+    sketch.ParallelConstraint(entity1=g[2], entity2=g[3], addUndoState=False)
+    sketch.Line(point1=(0.0, t2/2), point2=(0.0, H-t2/2))
+    sketch.PerpendicularConstraint(entity1=g[2], entity2=g[4], addUndoState=False)
+    sketch.Line(point1=(0.0, H-t2/2), point2=(B/2, H-t2/2))
+    sketch.HorizontalConstraint(entity=g[5], addUndoState=False)
+    sketch.PerpendicularConstraint(entity1=g[4], entity2=g[5], addUndoState=False)
+    sketch.Line(point1=(0.0, H-t2/2), point2=(-B/2, H-t2/2))
+    sketch.HorizontalConstraint(entity=g[6], addUndoState=False)
+    sketch.PerpendicularConstraint(entity1=g[4], entity2=g[6], addUndoState=False)
+    
+    # Create the first part (main section)
+    part = model.Part(name='Part-1', dimensionality=THREE_D, type=DEFORMABLE_BODY)
+    part.BaseShellExtrude(sketch=sketch, depth=L)
+    sketch.unsetPrimaryObject()
+    del model.sketches['__profile__']
+    part.regenerate()
+    
+    # Create a copy of the part for the middle section
+    part_copy = model.Part(name='Part-1-Copy', objectToCopy=model.parts['Part-1'])
+    
+    return part, part_copy
+
+# ============================================
+# Create Bolt Holes
+# ============================================
+def create_bolt_holes(part, part_copy):
+    """Create bolt holes in the parts"""
+    
+    # Create holes in the first part (end section)
+    create_holes_in_part(part, depth=t2)
+    
+    # Create holes in the copy part (middle section)
+    create_holes_in_part(part_copy, depth=H)
+
+def create_holes_in_part(part, depth):
+    """Create bolt holes in a specific part"""
+    
+    f, e = part.faces, part.edges
+    t = part.MakeSketchTransform(sketchPlane=f[0], sketchUpEdge=e[3],
+        sketchPlaneSide=SIDE1, sketchOrientation=RIGHT, origin=(B/4, H-t2/2, L/2))
+    
+    sketch = mdb.models['Model-1'].ConstrainedSketch(name='__profile__',
+        sheetSize=1091.12, gridSpacing=27.27, transform=t)
+    
+    g, v, d, c = sketch.geometry, sketch.vertices, sketch.dimensions, sketch.constraints
+    sketch.setPrimaryObject(option=SUPERIMPOSE)
+    
+    part.projectReferencesOntoSketch(sketch=sketch, filter=COPLANAR_EDGES)
+    
+    # Create bolt holes
+    sketch.CircleByCenterPerimeter(center=(B/4-bolt_distance, 0), point1=(B/4-bolt_distance, bolt_diameter/2))
+    sketch.CircleByCenterPerimeter(center=(B/4+bolt_distance, 0), point1=(B/4+bolt_distance, bolt_diameter/2))
+    sketch.move(vector=(0.0, -L/2), objectList=(g[11], g[12]))
+    
+    # Pattern the bolt holes
+    sketch.linearPattern(geomList=(g[11], g[12]), vertexList=(), number1=1,
+        spacing1=109.112, angle1=0.0, number2=num_bolts_vertical+1, spacing2=L/(num_bolts_vertical+1), angle2=90.0)
+    sketch.delete(objectList=(g[11], g[12]))
+    
+    # Cut the holes
+    f1, e1 = part.faces, part.edges
+    part.CutExtrude(sketchPlane=f1[0], sketchUpEdge=e1[3], sketchPlaneSide=SIDE1,
+        sketchOrientation=RIGHT, sketch=sketch, depth=depth, flipExtrudeDirection=OFF)
+    
+    sketch.unsetPrimaryObject()
+    del mdb.models['Model-1'].sketches['__profile__']
+
+# ============================================
+# Material and Section Definition
+# ============================================
+def define_materials_and_sections(model):
+    """Define materials and sections for the analysis"""
+    
+    # Create material
+    material = model.Material(name='Material-1')
+    material.Elastic(table=((205000.0, 0.3),))
+    material.Density(table=((7.85e-09,),))
+    
+    # Create sections
+    model.HomogeneousShellSection(name='websection',
+        preIntegrate=OFF, material='Material-1', thicknessType=UNIFORM,
+        thickness=t1, thicknessField='', nodalThicknessField='',
+        idealization=NO_IDEALIZATION, poissonDefinition=DEFAULT,
+        thicknessModulus=None, temperature=GRADIENT, useDensity=OFF,
+        integrationRule=SIMPSON, numIntPts=5)
+    
+    model.HomogeneousShellSection(name='flangesection',
+        preIntegrate=OFF, material='Material-1', thicknessType=UNIFORM,
+        thickness=t2, thicknessField='', nodalThicknessField='',
+        idealization=NO_IDEALIZATION, poissonDefinition=DEFAULT,
+        thicknessModulus=None, temperature=GRADIENT, useDensity=OFF,
+        integrationRule=SIMPSON, numIntPts=5)
+
+def assign_sections(part, part_copy):
+    """Assign sections to the parts"""
+    
+    # Assign sections to the first part
+    assign_sections_to_part(part)
+    
+    # Assign sections to the copy part
+    assign_sections_to_part(part_copy)
+
+def assign_sections_to_part(part):
+    """Assign sections to a specific part"""
+    
+    # Assign web section
+    f = part.faces
+    faces = f.findAt(((0.0, H/2, L/2),))
+    region = regionToolset.Region(faces=faces)
+    part.SectionAssignment(region=region, sectionName='websection', offset=0.0,
+        offsetType=MIDDLE_SURFACE, offsetField='', thicknessAssignment=FROM_SECTION)
+    
+    # Assign flange section
+    f = part.faces
+    faces = f.findAt(((-B/2, t2/2, L/2),), ((-B/2, H-t2/2, L/2),), 
+                    ((B/2, H-t2/2, L/2),), ((B/2, t2/2, L/2),))
+    region = regionToolset.Region(faces=faces)
+    part.SectionAssignment(region=region, sectionName='flangesection', offset=0.0,
+        offsetType=MIDDLE_SURFACE, offsetField='', thicknessAssignment=FROM_SECTION)
+
+# ============================================
+# Assembly Creation
+# ============================================
+def create_assembly(model):
+    """Create the assembly based on the number of segments"""
+    
+    assembly = model.rootAssembly
+    assembly.DatumCsysByDefault(CARTESIAN)
+    
+    if num_segments == 1:
+        # Single segment case
+        p = model.parts['Part-1-Copy']
+        assembly.Instance(name='Part-1-Copy-1', part=p, dependent=ON)
+        assembly.features.changeKey(fromName='Part-1-Copy-1', toName='Part-1')
+        
+    elif num_segments == 2:
+        # Two segments case
+        p = model.parts['Part-1']
+        assembly.Instance(name='Part-1-1', part=p, dependent=ON)
+        assembly.features.changeKey(fromName='Part-1-1', toName='Part-1')
+        
+        p = model.parts['Part-1']
+        assembly.Instance(name='Part-1-1-lin-1-2', part=p, dependent=ON)
+        p = assembly.instances['Part-1-1-lin-1-2']
+        p.translate(vector=(0, H, 0.0))
+        
+        assembly.rotate(instanceList=('Part-1-1-lin-1-2',), axisPoint=(0, H+H/2, 0.0),
+            axisDirection=(0.0, 0.0, 1.0), angle=180.0)
+        assembly.features.changeKey(fromName='Part-1-1-lin-1-2', toName='Part-2')
+        
+    elif num_segments == 3:
+        # Three segments case
+        p = model.parts['Part-1']
+        assembly.Instance(name='Part-1-1', part=p, dependent=ON)
+        assembly.features.changeKey(fromName='Part-1-1', toName='Part-1')
+        
+        p = model.parts['Part-1']
+        assembly.Instance(name='Part-1-1-lin-1-2', part=p, dependent=ON)
+        
+        assembly.rotate(instanceList=('Part-1-1-lin-1-2',), axisPoint=(0.0, 0.0, 0.0),
+            axisDirection=(1, 0, 0.0), angle=180.0)
+        
+        assembly.translate(instanceList=('Part-1-1-lin-1-2',), vector=(0.0, 3 * H, L))
+        assembly.features.changeKey(fromName='Part-1-1-lin-1-2', toName='Part-3')
+        
+        p = model.parts['Part-1-Copy']
+        assembly.Instance(name='Part-1-Copy-1', part=p, dependent=ON)
+        p1 = assembly.instances['Part-1-Copy-1']
+        p1.translate(vector=(0, H, 0.0))
+        assembly.features.changeKey(fromName='Part-1-Copy-1', toName='Part-2')
+        
+    elif num_segments >= 4:
+        # Four or more segments case
+        p = model.parts['Part-1']
+        assembly.Instance(name='Part-1-1', part=p, dependent=ON)
+        
+        p = model.parts['Part-1']
+        assembly.Instance(name='Part-1-2', part=p, dependent=ON)
+        p = assembly.instances['Part-1-2']
+        
+        assembly.rotate(instanceList=('Part-1-2',), axisPoint=(0.0, 0.0, 0.0),
+            axisDirection=(1, 0, 0.0), angle=180.0)
+        
+        assembly.translate(instanceList=('Part-1-2',), vector=(0.0, num_segments * H, L))
+        
+        p = model.parts['Part-1-Copy']
+        assembly.Instance(name='Part-1-Copy-1', part=p, dependent=ON)
+        p1 = assembly.instances['Part-1-Copy-1']
+        p1.translate(vector=(0, H, 0.0))
+        
+        # Pattern the middle segments
+        assembly.LinearInstancePattern(instanceList=('Part-1-Copy-1',), direction1=(1.0, 0.0, 0.0), 
+            direction2=(0.0, 1.0, 0.0), number1=1, number2=num_segments-2, spacing1=0, spacing2=H)
+        
+        # Rename the parts
+        assembly.features.changeKey(fromName='Part-1-1', toName='Part-1')
+        assembly.features.changeKey(fromName='Part-1-Copy-1', toName='Part-2')
+        assembly.features.changeKey(fromName='Part-1-2', toName='Part-'+str(num_segments))
+        
+        # Rename the patterned parts
+        for i in range(num_segments-3):
+            assembly.features.changeKey(fromName='Part-1-Copy-1-lin-1-'+str(i+2), toName='Part-'+str(i+3))
+
+# ============================================
+# Create Sets for Boundary Conditions
+# ============================================
+def create_sets(assembly):
+    """Create sets for boundary conditions and loads"""
+    
+    # Create top and bottom surface sets based on number of segments
+    if num_segments == 1:
+        create_sets_single_segment(assembly)
+    elif num_segments == 2:
+        create_sets_two_segments(assembly)
+    elif num_segments == 3:
+        create_sets_three_segments(assembly)
+    elif num_segments == 4:
+        create_sets_four_segments(assembly)
+    elif num_segments == 5:
+        create_sets_five_segments(assembly)
+    elif num_segments == 6:
+        create_sets_six_segments(assembly)
+    elif num_segments == 7:
+        create_sets_seven_segments(assembly)
+    elif num_segments == 8:
+        create_sets_eight_segments(assembly)
+    elif num_segments == 9:
+        create_sets_nine_segments(assembly)
+    else:
+        create_sets_ten_segments(assembly)
+    
+    # Create reference points for loading
+    create_reference_points(assembly)
+
+def create_sets_single_segment(assembly):
+    """Create sets for a single segment"""
+    
+    # Top surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, L),), ((B/4, t2/2, L),), ((0, H/2, L),),
+                   ((-B/4, H-t2/2, L),), ((B/4, H-t2/2, L),))
+    assembly.Set(edges=edges1, name='Tsurface')
+    
+    # Bottom surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, 0.0),), ((B/4, t2/2, 0.0),), ((0, H/2, 0.0),),
+                   ((-B/4, H-t2/2, 0.0),), ((B/4, H-t2/2, 0.0),))
+    assembly.Set(edges=edges1, name='Bsurface')
+
+def create_sets_two_segments(assembly):
+    """Create sets for two segments"""
+    
+    # Top surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, L),), ((B/4, t2/2, L),), ((0, H/2, L),),
+                   ((-B/4, H-t2/2, L),), ((B/4, H-t2/2, L),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, L),), ((B/4, H+t2/2, L),), ((0, H+H/2, L),),
+                   ((-B/4, 2*H-t2/2, L),), ((B/4, 2*H-t2/2, L),))
+    assembly.Set(edges=edges1 + edges2, name='Tsurface')
+    
+    # Bottom surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, 0.0),), ((B/4, t2/2, 0.0),), ((0, H/2, 0.0),),
+                   ((-B/4, H-t2/2, 0.0),), ((B/4, H-t2/2, 0.0),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, 0.0),), ((B/4, H+t2/2, 0.0),), ((0, H+H/2, 0.0),),
+                   ((-B/4, 2*H-t2/2, 0.0),), ((B/4, 2*H-t2/2, 0.0),))
+    assembly.Set(edges=edges1 + edges2, name='Bsurface')
+
+def create_sets_three_segments(assembly):
+    """Create sets for three segments"""
+    
+    # Top surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, L),), ((B/4, t2/2, L),), ((0, H/2, L),),
+                   ((-B/4, H-t2/2, L),), ((B/4, H-t2/2, L),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, L),), ((B/4, H+t2/2, L),), ((0, H+H/2, L),),
+                   ((-B/4, 2*H-t2/2, L),), ((B/4, 2*H-t2/2, L),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, L),), ((B/4, 2*H+t2/2, L),), ((0, 2*H+H/2, L),),
+                   ((-B/4, 3*H-t2/2, L),), ((B/4, 3*H-t2/2, L),))
+    assembly.Set(edges=edges1 + edges2 + edges3, name='Tsurface')
+    
+    # Bottom surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, 0.0),), ((B/4, t2/2, 0.0),), ((0, H/2, 0.0),),
+                   ((-B/4, H-t2/2, 0.0),), ((B/4, H-t2/2, 0.0),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, 0.0),), ((B/4, H+t2/2, 0.0),), ((0, H+H/2, 0.0),),
+                   ((-B/4, 2*H-t2/2, 0.0),), ((B/4, 2*H-t2/2, 0.0),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, 0.0),), ((B/4, 2*H+t2/2, 0.0),), ((0, 2*H+H/2, 0.0),),
+                   ((-B/4, 3*H-t2/2, 0.0),), ((B/4, 3*H-t2/2, 0.0),))
+    assembly.Set(edges=edges1 + edges2 + edges3, name='Bsurface')
+
+def create_sets_four_segments(assembly):
+    """Create sets for four segments"""
+    
+    # Top surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, L),), ((B/4, t2/2, L),), ((0, H/2, L),),
+                   ((-B/4, H-t2/2, L),), ((B/4, H-t2/2, L),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, L),), ((B/4, H+t2/2, L),), ((0, H+H/2, L),),
+                   ((-B/4, 2*H-t2/2, L),), ((B/4, 2*H-t2/2, L),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, L),), ((B/4, 2*H+t2/2, L),), ((0, 2*H+H/2, L),),
+                   ((-B/4, 3*H-t2/2, L),), ((B/4, 3*H-t2/2, L),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, L),), ((B/4, 3*H+t2/2, L),), ((0, 3*H+H/2, L),),
+                   ((-B/4, 4*H-t2/2, L),), ((B/4, 4*H-t2/2, L),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4, name='Tsurface')
+    
+    # Bottom surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, 0.0),), ((B/4, t2/2, 0.0),), ((0, H/2, 0.0),),
+                   ((-B/4, H-t2/2, 0.0),), ((B/4, H-t2/2, 0.0),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, 0.0),), ((B/4, H+t2/2, 0.0),), ((0, H+H/2, 0.0),),
+                   ((-B/4, 2*H-t2/2, 0.0),), ((B/4, 2*H-t2/2, 0.0),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, 0.0),), ((B/4, 2*H+t2/2, 0.0),), ((0, 2*H+H/2, 0.0),),
+                   ((-B/4, 3*H-t2/2, 0.0),), ((B/4, 3*H-t2/2, 0.0),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, 0.0),), ((B/4, 3*H+t2/2, 0.0),), ((0, 3*H+H/2, 0.0),),
+                   ((-B/4, 4*H-t2/2, 0.0),), ((B/4, 4*H-t2/2, 0.0),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4, name='Bsurface')
+
+def create_sets_five_segments(assembly):
+    """Create sets for five segments"""
+    
+    # Top surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, L),), ((B/4, t2/2, L),), ((0, H/2, L),),
+                   ((-B/4, H-t2/2, L),), ((B/4, H-t2/2, L),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, L),), ((B/4, H+t2/2, L),), ((0, H+H/2, L),),
+                   ((-B/4, 2*H-t2/2, L),), ((B/4, 2*H-t2/2, L),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, L),), ((B/4, 2*H+t2/2, L),), ((0, 2*H+H/2, L),),
+                   ((-B/4, 3*H-t2/2, L),), ((B/4, 3*H-t2/2, L),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, L),), ((B/4, 3*H+t2/2, L),), ((0, 3*H+H/2, L),),
+                   ((-B/4, 4*H-t2/2, L),), ((B/4, 4*H-t2/2, L),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, L),), ((B/4, 4*H+t2/2, L),), ((0, 4*H+H/2, L),),
+                   ((-B/4, 5*H-t2/2, L),), ((B/4, 5*H-t2/2, L),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5, name='Tsurface')
+    
+    # Bottom surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, 0.0),), ((B/4, t2/2, 0.0),), ((0, H/2, 0.0),),
+                   ((-B/4, H-t2/2, 0.0),), ((B/4, H-t2/2, 0.0),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, 0.0),), ((B/4, H+t2/2, 0.0),), ((0, H+H/2, 0.0),),
+                   ((-B/4, 2*H-t2/2, 0.0),), ((B/4, 2*H-t2/2, 0.0),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, 0.0),), ((B/4, 2*H+t2/2, 0.0),), ((0, 2*H+H/2, 0.0),),
+                   ((-B/4, 3*H-t2/2, 0.0),), ((B/4, 3*H-t2/2, 0.0),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, 0.0),), ((B/4, 3*H+t2/2, 0.0),), ((0, 3*H+H/2, 0.0),),
+                   ((-B/4, 4*H-t2/2, 0.0),), ((B/4, 4*H-t2/2, 0.0),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, 0.0),), ((B/4, 4*H+t2/2, 0.0),), ((0, 4*H+H/2, 0.0),),
+                   ((-B/4, 5*H-t2/2, 0.0),), ((B/4, 5*H-t2/2, 0.0),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5, name='Bsurface')
+
+def create_sets_six_segments(assembly):
+    """Create sets for six segments"""
+    
+    # Top surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, L),), ((B/4, t2/2, L),), ((0, H/2, L),),
+                   ((-B/4, H-t2/2, L),), ((B/4, H-t2/2, L),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, L),), ((B/4, H+t2/2, L),), ((0, H+H/2, L),),
+                   ((-B/4, 2*H-t2/2, L),), ((B/4, 2*H-t2/2, L),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, L),), ((B/4, 2*H+t2/2, L),), ((0, 2*H+H/2, L),),
+                   ((-B/4, 3*H-t2/2, L),), ((B/4, 3*H-t2/2, L),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, L),), ((B/4, 3*H+t2/2, L),), ((0, 3*H+H/2, L),),
+                   ((-B/4, 4*H-t2/2, L),), ((B/4, 4*H-t2/2, L),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, L),), ((B/4, 4*H+t2/2, L),), ((0, 4*H+H/2, L),),
+                   ((-B/4, 5*H-t2/2, L),), ((B/4, 5*H-t2/2, L),))
+    e6 = assembly.instances['Part-6'].edges
+    edges6 = e6.findAt(((-B/4, 5*H+t2/2, L),), ((B/4, 5*H+t2/2, L),), ((0, 5*H+H/2, L),),
+                   ((-B/4, 6*H-t2/2, L),), ((B/4, 6*H-t2/2, L),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5 + edges6, name='Tsurface')
+    
+    # Bottom surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, 0.0),), ((B/4, t2/2, 0.0),), ((0, H/2, 0.0),),
+                   ((-B/4, H-t2/2, 0.0),), ((B/4, H-t2/2, 0.0),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, 0.0),), ((B/4, H+t2/2, 0.0),), ((0, H+H/2, 0.0),),
+                   ((-B/4, 2*H-t2/2, 0.0),), ((B/4, 2*H-t2/2, 0.0),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, 0.0),), ((B/4, 2*H+t2/2, 0.0),), ((0, 2*H+H/2, 0.0),),
+                   ((-B/4, 3*H-t2/2, 0.0),), ((B/4, 3*H-t2/2, 0.0),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, 0.0),), ((B/4, 3*H+t2/2, 0.0),), ((0, 3*H+H/2, 0.0),),
+                   ((-B/4, 4*H-t2/2, 0.0),), ((B/4, 4*H-t2/2, 0.0),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, 0.0),), ((B/4, 4*H+t2/2, 0.0),), ((0, 4*H+H/2, 0.0),),
+                   ((-B/4, 5*H-t2/2, 0.0),), ((B/4, 5*H-t2/2, 0.0),))
+    e6 = assembly.instances['Part-6'].edges
+    edges6 = e6.findAt(((-B/4, 5*H+t2/2, 0.0),), ((B/4, 5*H+t2/2, 0.0),), ((0, 5*H+H/2, 0.0),),
+                   ((-B/4, 6*H-t2/2, 0.0),), ((B/4, 6*H-t2/2, 0.0),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5 + edges6, name='Bsurface')
+
+def create_sets_seven_segments(assembly):
+    """Create sets for seven segments"""
+    
+    # Top surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, L),), ((B/4, t2/2, L),), ((0, H/2, L),),
+                   ((-B/4, H-t2/2, L),), ((B/4, H-t2/2, L),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, L),), ((B/4, H+t2/2, L),), ((0, H+H/2, L),),
+                   ((-B/4, 2*H-t2/2, L),), ((B/4, 2*H-t2/2, L),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, L),), ((B/4, 2*H+t2/2, L),), ((0, 2*H+H/2, L),),
+                   ((-B/4, 3*H-t2/2, L),), ((B/4, 3*H-t2/2, L),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, L),), ((B/4, 3*H+t2/2, L),), ((0, 3*H+H/2, L),),
+                   ((-B/4, 4*H-t2/2, L),), ((B/4, 4*H-t2/2, L),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, L),), ((B/4, 4*H+t2/2, L),), ((0, 4*H+H/2, L),),
+                   ((-B/4, 5*H-t2/2, L),), ((B/4, 5*H-t2/2, L),))
+    e6 = assembly.instances['Part-6'].edges
+    edges6 = e6.findAt(((-B/4, 5*H+t2/2, L),), ((B/4, 5*H+t2/2, L),), ((0, 5*H+H/2, L),),
+                   ((-B/4, 6*H-t2/2, L),), ((B/4, 6*H-t2/2, L),))
+    e7 = assembly.instances['Part-7'].edges
+    edges7 = e7.findAt(((-B/4, 6*H+t2/2, L),), ((B/4, 6*H+t2/2, L),), ((0, 6*H+H/2, L),),
+                   ((-B/4, 7*H-t2/2, L),), ((B/4, 7*H-t2/2, L),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5 + edges6 + edges7, name='Tsurface')
+    
+    # Bottom surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, 0.0),), ((B/4, t2/2, 0.0),), ((0, H/2, 0.0),),
+                   ((-B/4, H-t2/2, 0.0),), ((B/4, H-t2/2, 0.0),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, 0.0),), ((B/4, H+t2/2, 0.0),), ((0, H+H/2, 0.0),),
+                   ((-B/4, 2*H-t2/2, 0.0),), ((B/4, 2*H-t2/2, 0.0),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, 0.0),), ((B/4, 2*H+t2/2, 0.0),), ((0, 2*H+H/2, 0.0),),
+                   ((-B/4, 3*H-t2/2, 0.0),), ((B/4, 3*H-t2/2, 0.0),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, 0.0),), ((B/4, 3*H+t2/2, 0.0),), ((0, 3*H+H/2, 0.0),),
+                   ((-B/4, 4*H-t2/2, 0.0),), ((B/4, 4*H-t2/2, 0.0),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, 0.0),), ((B/4, 4*H+t2/2, 0.0),), ((0, 4*H+H/2, 0.0),),
+                   ((-B/4, 5*H-t2/2, 0.0),), ((B/4, 5*H-t2/2, 0.0),))
+    e6 = assembly.instances['Part-6'].edges
+    edges6 = e6.findAt(((-B/4, 5*H+t2/2, 0.0),), ((B/4, 5*H+t2/2, 0.0),), ((0, 5*H+H/2, 0.0),),
+                   ((-B/4, 6*H-t2/2, 0.0),), ((B/4, 6*H-t2/2, 0.0),))
+    e7 = assembly.instances['Part-7'].edges
+    edges7 = e7.findAt(((-B/4, 6*H+t2/2, 0.0),), ((B/4, 6*H+t2/2, 0.0),), ((0, 6*H+H/2, 0.0),),
+                   ((-B/4, 7*H-t2/2, 0.0),), ((B/4, 7*H-t2/2, 0.0),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5 + edges6 + edges7, name='Bsurface')
+
+def create_sets_eight_segments(assembly):
+    """Create sets for eight segments"""
+    
+    # Top surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, L),), ((B/4, t2/2, L),), ((0, H/2, L),),
+                   ((-B/4, H-t2/2, L),), ((B/4, H-t2/2, L),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, L),), ((B/4, H+t2/2, L),), ((0, H+H/2, L),),
+                   ((-B/4, 2*H-t2/2, L),), ((B/4, 2*H-t2/2, L),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, L),), ((B/4, 2*H+t2/2, L),), ((0, 2*H+H/2, L),),
+                   ((-B/4, 3*H-t2/2, L),), ((B/4, 3*H-t2/2, L),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, L),), ((B/4, 3*H+t2/2, L),), ((0, 3*H+H/2, L),),
+                   ((-B/4, 4*H-t2/2, L),), ((B/4, 4*H-t2/2, L),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, L),), ((B/4, 4*H+t2/2, L),), ((0, 4*H+H/2, L),),
+                   ((-B/4, 5*H-t2/2, L),), ((B/4, 5*H-t2/2, L),))
+    e6 = assembly.instances['Part-6'].edges
+    edges6 = e6.findAt(((-B/4, 5*H+t2/2, L),), ((B/4, 5*H+t2/2, L),), ((0, 5*H+H/2, L),),
+                   ((-B/4, 6*H-t2/2, L),), ((B/4, 6*H-t2/2, L),))
+    e7 = assembly.instances['Part-7'].edges
+    edges7 = e7.findAt(((-B/4, 6*H+t2/2, L),), ((B/4, 6*H+t2/2, L),), ((0, 6*H+H/2, L),),
+                   ((-B/4, 7*H-t2/2, L),), ((B/4, 7*H-t2/2, L),))
+    e8 = assembly.instances['Part-8'].edges
+    edges8 = e8.findAt(((-B/4, 7*H+t2/2, L),), ((B/4, 7*H+t2/2, L),), ((0, 7*H+H/2, L),),
+                   ((-B/4, 8*H-t2/2, L),), ((B/4, 8*H-t2/2, L),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5 + edges6 + edges7 + edges8, name='Tsurface')
+    
+    # Bottom surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, 0.0),), ((B/4, t2/2, 0.0),), ((0, H/2, 0.0),),
+                   ((-B/4, H-t2/2, 0.0),), ((B/4, H-t2/2, 0.0),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, 0.0),), ((B/4, H+t2/2, 0.0),), ((0, H+H/2, 0.0),),
+                   ((-B/4, 2*H-t2/2, 0.0),), ((B/4, 2*H-t2/2, 0.0),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, 0.0),), ((B/4, 2*H+t2/2, 0.0),), ((0, 2*H+H/2, 0.0),),
+                   ((-B/4, 3*H-t2/2, 0.0),), ((B/4, 3*H-t2/2, 0.0),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, 0.0),), ((B/4, 3*H+t2/2, 0.0),), ((0, 3*H+H/2, 0.0),),
+                   ((-B/4, 4*H-t2/2, 0.0),), ((B/4, 4*H-t2/2, 0.0),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, 0.0),), ((B/4, 4*H+t2/2, 0.0),), ((0, 4*H+H/2, 0.0),),
+                   ((-B/4, 5*H-t2/2, 0.0),), ((B/4, 5*H-t2/2, 0.0),))
+    e6 = assembly.instances['Part-6'].edges
+    edges6 = e6.findAt(((-B/4, 5*H+t2/2, 0.0),), ((B/4, 5*H+t2/2, 0.0),), ((0, 5*H+H/2, 0.0),),
+                   ((-B/4, 6*H-t2/2, 0.0),), ((B/4, 6*H-t2/2, 0.0),))
+    e7 = assembly.instances['Part-7'].edges
+    edges7 = e7.findAt(((-B/4, 6*H+t2/2, 0.0),), ((B/4, 6*H+t2/2, 0.0),), ((0, 6*H+H/2, 0.0),),
+                   ((-B/4, 7*H-t2/2, 0.0),), ((B/4, 7*H-t2/2, 0.0),))
+    e8 = assembly.instances['Part-8'].edges
+    edges8 = e8.findAt(((-B/4, 7*H+t2/2, 0.0),), ((B/4, 7*H+t2/2, 0.0),), ((0, 7*H+H/2, 0.0),),
+                   ((-B/4, 8*H-t2/2, 0.0),), ((B/4, 8*H-t2/2, 0.0),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5 + edges6 + edges7 + edges8, name='Bsurface')
+
+def create_sets_nine_segments(assembly):
+    """Create sets for nine segments"""
+    
+    # Top surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, L),), ((B/4, t2/2, L),), ((0, H/2, L),),
+                   ((-B/4, H-t2/2, L),), ((B/4, H-t2/2, L),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, L),), ((B/4, H+t2/2, L),), ((0, H+H/2, L),),
+                   ((-B/4, 2*H-t2/2, L),), ((B/4, 2*H-t2/2, L),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, L),), ((B/4, 2*H+t2/2, L),), ((0, 2*H+H/2, L),),
+                   ((-B/4, 3*H-t2/2, L),), ((B/4, 3*H-t2/2, L),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, L),), ((B/4, 3*H+t2/2, L),), ((0, 3*H+H/2, L),),
+                   ((-B/4, 4*H-t2/2, L),), ((B/4, 4*H-t2/2, L),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, L),), ((B/4, 4*H+t2/2, L),), ((0, 4*H+H/2, L),),
+                   ((-B/4, 5*H-t2/2, L),), ((B/4, 5*H-t2/2, L),))
+    e6 = assembly.instances['Part-6'].edges
+    edges6 = e6.findAt(((-B/4, 5*H+t2/2, L),), ((B/4, 5*H+t2/2, L),), ((0, 5*H+H/2, L),),
+                   ((-B/4, 6*H-t2/2, L),), ((B/4, 6*H-t2/2, L),))
+    e7 = assembly.instances['Part-7'].edges
+    edges7 = e7.findAt(((-B/4, 6*H+t2/2, L),), ((B/4, 6*H+t2/2, L),), ((0, 6*H+H/2, L),),
+                   ((-B/4, 7*H-t2/2, L),), ((B/4, 7*H-t2/2, L),))
+    e8 = assembly.instances['Part-8'].edges
+    edges8 = e8.findAt(((-B/4, 7*H+t2/2, L),), ((B/4, 7*H+t2/2, L),), ((0, 7*H+H/2, L),),
+                   ((-B/4, 8*H-t2/2, L),), ((B/4, 8*H-t2/2, L),))
+    e9 = assembly.instances['Part-9'].edges
+    edges9 = e9.findAt(((-B/4, 8*H+t2/2, L),), ((B/4, 8*H+t2/2, L),), ((0, 8*H+H/2, L),),
+                   ((-B/4, 9*H-t2/2, L),), ((B/4, 9*H-t2/2, L),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5 + edges6 + edges7 + edges8 + edges9, name='Tsurface')
+    
+    # Bottom surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, 0.0),), ((B/4, t2/2, 0.0),), ((0, H/2, 0.0),),
+                   ((-B/4, H-t2/2, 0.0),), ((B/4, H-t2/2, 0.0),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, 0.0),), ((B/4, H+t2/2, 0.0),), ((0, H+H/2, 0.0),),
+                   ((-B/4, 2*H-t2/2, 0.0),), ((B/4, 2*H-t2/2, 0.0),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, 0.0),), ((B/4, 2*H+t2/2, 0.0),), ((0, 2*H+H/2, 0.0),),
+                   ((-B/4, 3*H-t2/2, 0.0),), ((B/4, 3*H-t2/2, 0.0),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, 0.0),), ((B/4, 3*H+t2/2, 0.0),), ((0, 3*H+H/2, 0.0),),
+                   ((-B/4, 4*H-t2/2, 0.0),), ((B/4, 4*H-t2/2, 0.0),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, 0.0),), ((B/4, 4*H+t2/2, 0.0),), ((0, 4*H+H/2, 0.0),),
+                   ((-B/4, 5*H-t2/2, 0.0),), ((B/4, 5*H-t2/2, 0.0),))
+    e6 = assembly.instances['Part-6'].edges
+    edges6 = e6.findAt(((-B/4, 5*H+t2/2, 0.0),), ((B/4, 5*H+t2/2, 0.0),), ((0, 5*H+H/2, 0.0),),
+                   ((-B/4, 6*H-t2/2, 0.0),), ((B/4, 6*H-t2/2, 0.0),))
+    e7 = assembly.instances['Part-7'].edges
+    edges7 = e7.findAt(((-B/4, 6*H+t2/2, 0.0),), ((B/4, 6*H+t2/2, 0.0),), ((0, 6*H+H/2, 0.0),),
+                   ((-B/4, 7*H-t2/2, 0.0),), ((B/4, 7*H-t2/2, 0.0),))
+    e8 = assembly.instances['Part-8'].edges
+    edges8 = e8.findAt(((-B/4, 7*H+t2/2, 0.0),), ((B/4, 7*H+t2/2, 0.0),), ((0, 7*H+H/2, 0.0),),
+                   ((-B/4, 8*H-t2/2, 0.0),), ((B/4, 8*H-t2/2, 0.0),))
+    e9 = assembly.instances['Part-9'].edges
+    edges9 = e9.findAt(((-B/4, 8*H+t2/2, 0.0),), ((B/4, 8*H+t2/2, 0.0),), ((0, 8*H+H/2, 0.0),),
+                   ((-B/4, 9*H-t2/2, 0.0),), ((B/4, 9*H-t2/2, 0.0),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5 + edges6 + edges7 + edges8 + edges9, name='Bsurface')
+
+def create_sets_ten_segments(assembly):
+    """Create sets for ten segments"""
+    
+    # Top surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, L),), ((B/4, t2/2, L),), ((0, H/2, L),),
+                   ((-B/4, H-t2/2, L),), ((B/4, H-t2/2, L),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, L),), ((B/4, H+t2/2, L),), ((0, H+H/2, L),),
+                   ((-B/4, 2*H-t2/2, L),), ((B/4, 2*H-t2/2, L),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, L),), ((B/4, 2*H+t2/2, L),), ((0, 2*H+H/2, L),),
+                   ((-B/4, 3*H-t2/2, L),), ((B/4, 3*H-t2/2, L),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, L),), ((B/4, 3*H+t2/2, L),), ((0, 3*H+H/2, L),),
+                   ((-B/4, 4*H-t2/2, L),), ((B/4, 4*H-t2/2, L),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, L),), ((B/4, 4*H+t2/2, L),), ((0, 4*H+H/2, L),),
+                   ((-B/4, 5*H-t2/2, L),), ((B/4, 5*H-t2/2, L),))
+    e6 = assembly.instances['Part-6'].edges
+    edges6 = e6.findAt(((-B/4, 5*H+t2/2, L),), ((B/4, 5*H+t2/2, L),), ((0, 5*H+H/2, L),),
+                   ((-B/4, 6*H-t2/2, L),), ((B/4, 6*H-t2/2, L),))
+    e7 = assembly.instances['Part-7'].edges
+    edges7 = e7.findAt(((-B/4, 6*H+t2/2, L),), ((B/4, 6*H+t2/2, L),), ((0, 6*H+H/2, L),),
+                   ((-B/4, 7*H-t2/2, L),), ((B/4, 7*H-t2/2, L),))
+    e8 = assembly.instances['Part-8'].edges
+    edges8 = e8.findAt(((-B/4, 7*H+t2/2, L),), ((B/4, 7*H+t2/2, L),), ((0, 7*H+H/2, L),),
+                   ((-B/4, 8*H-t2/2, L),), ((B/4, 8*H-t2/2, L),))
+    e9 = assembly.instances['Part-9'].edges
+    edges9 = e9.findAt(((-B/4, 8*H+t2/2, L),), ((B/4, 8*H+t2/2, L),), ((0, 8*H+H/2, L),),
+                   ((-B/4, 9*H-t2/2, L),), ((B/4, 9*H-t2/2, L),))
+    e10 = assembly.instances['Part-10'].edges
+    edges10 = e10.findAt(((-B/4, 9*H+t2/2, L),), ((B/4, 9*H+t2/2, L),), ((0, 9*H+H/2, L),),
+                   ((-B/4, 10*H-t2/2, L),), ((B/4, 10*H-t2/2, L),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5 + edges6 + edges7 + edges8 + edges9 + edges10, name='Tsurface')
+    
+    # Bottom surface
+    e1 = assembly.instances['Part-1'].edges
+    edges1 = e1.findAt(((-B/4, t2/2, 0.0),), ((B/4, t2/2, 0.0),), ((0, H/2, 0.0),),
+                   ((-B/4, H-t2/2, 0.0),), ((B/4, H-t2/2, 0.0),))
+    e2 = assembly.instances['Part-2'].edges
+    edges2 = e2.findAt(((-B/4, H+t2/2, 0.0),), ((B/4, H+t2/2, 0.0),), ((0, H+H/2, 0.0),),
+                   ((-B/4, 2*H-t2/2, 0.0),), ((B/4, 2*H-t2/2, 0.0),))
+    e3 = assembly.instances['Part-3'].edges
+    edges3 = e3.findAt(((-B/4, 2*H+t2/2, 0.0),), ((B/4, 2*H+t2/2, 0.0),), ((0, 2*H+H/2, 0.0),),
+                   ((-B/4, 3*H-t2/2, 0.0),), ((B/4, 3*H-t2/2, 0.0),))
+    e4 = assembly.instances['Part-4'].edges
+    edges4 = e4.findAt(((-B/4, 3*H+t2/2, 0.0),), ((B/4, 3*H+t2/2, 0.0),), ((0, 3*H+H/2, 0.0),),
+                   ((-B/4, 4*H-t2/2, 0.0),), ((B/4, 4*H-t2/2, 0.0),))
+    e5 = assembly.instances['Part-5'].edges
+    edges5 = e5.findAt(((-B/4, 4*H+t2/2, 0.0),), ((B/4, 4*H+t2/2, 0.0),), ((0, 4*H+H/2, 0.0),),
+                   ((-B/4, 5*H-t2/2, 0.0),), ((B/4, 5*H-t2/2, 0.0),))
+    e6 = assembly.instances['Part-6'].edges
+    edges6 = e6.findAt(((-B/4, 5*H+t2/2, 0.0),), ((B/4, 5*H+t2/2, 0.0),), ((0, 5*H+H/2, 0.0),),
+                   ((-B/4, 6*H-t2/2, 0.0),), ((B/4, 6*H-t2/2, 0.0),))
+    e7 = assembly.instances['Part-7'].edges
+    edges7 = e7.findAt(((-B/4, 6*H+t2/2, 0.0),), ((B/4, 6*H+t2/2, 0.0),), ((0, 6*H+H/2, 0.0),),
+                   ((-B/4, 7*H-t2/2, 0.0),), ((B/4, 7*H-t2/2, 0.0),))
+    e8 = assembly.instances['Part-8'].edges
+    edges8 = e8.findAt(((-B/4, 7*H+t2/2, 0.0),), ((B/4, 7*H+t2/2, 0.0),), ((0, 7*H+H/2, 0.0),),
+                   ((-B/4, 8*H-t2/2, 0.0),), ((B/4, 8*H-t2/2, 0.0),))
+    e9 = assembly.instances['Part-9'].edges
+    edges9 = e9.findAt(((-B/4, 8*H+t2/2, 0.0),), ((B/4, 8*H+t2/2, 0.0),), ((0, 8*H+H/2, 0.0),),
+                   ((-B/4, 9*H-t2/2, 0.0),), ((B/4, 9*H-t2/2, 0.0),))
+    e10 = assembly.instances['Part-10'].edges
+    edges10 = e10.findAt(((-B/4, 9*H+t2/2, 0.0),), ((B/4, 9*H+t2/2, 0.0),), ((0, 9*H+H/2, 0.0),),
+                   ((-B/4, 10*H-t2/2, 0.0),), ((B/4, 10*H-t2/2, 0.0),))
+    assembly.Set(edges=edges1 + edges2 + edges3 + edges4 + edges5 + edges6 + edges7 + edges8 + edges9 + edges10, name='Bsurface')
+
+def create_reference_points(assembly):
+    """Create reference points for loading"""
+    
+    # Top reference point
+    assembly.AttachmentPoints(name='RPR1', points=((0, num_segments*H/2, L),))
+    v1 = assembly.vertices
+    verts1 = v1.findAt(((0, num_segments*H/2, L),))
+    assembly.Set(vertices=verts1, name='TTpoint')
+    
+    # Bottom reference point
+    assembly.AttachmentPoints(name='RPR2', points=((0, num_segments*H/2, 0),))
+    v1 = assembly.vertices
+    verts1 = v1.findAt(((0, num_segments*H/2, 0),))
+    assembly.Set(vertices=verts1, name='BBpoint')
+
+# ============================================
+# Mesh Creation
+# ============================================
+def create_mesh(part, part_copy):
+    """Create mesh for the parts"""
+    
+    # Create mesh for the first part
+    create_mesh_for_part(part)
+    
+    # Create mesh for the copy part
+    create_mesh_for_part(part_copy)
+
+def create_mesh_for_part(part):
+    """Create mesh for a specific part"""
+    
+    # Seed the part
+    part.seedPart(size=mesh_size, deviationFactor=0.1, minSizeFactor=0.1)
+    
+    # Generate the mesh
+    part.generateMesh()
+
+# ============================================
+# Contact Definition
+# ============================================
+def define_contact(model):
+    """Define contact properties and interactions"""
+    
+    # Create contact property
+    contact_property = model.ContactProperty('IntProp-1')
+    contact_property.TangentialBehavior(
+        formulation=PENALTY, directionality=ISOTROPIC, slipRateDependency=OFF,
+        pressureDependency=OFF, temperatureDependency=OFF, dependencies=0, table=((friction_coef,),),
+        shearStressLimit=None, maximumElasticSlip=FRACTION,
+        fraction=0.005, elasticSlipStiffness=None)
+    contact_property.NormalBehavior(
+        pressureOverclosure=HARD, allowSeparation=ON,
+        constraintEnforcementMethod=DEFAULT)
+    
+    # Create contact interaction
+    model.ContactStd(name='Int-1', createStepName='Initial')
+    model.interactions['Int-1'].includedPairs.setValuesInStep(
+        stepName='Initial', useAllstar=ON)
+    model.interactions['Int-1'].contactPropertyAssignments.appendInStep(
+        stepName='Initial', assignments=((GLOBAL, SELF, 'IntProp-1'),))
+
+# ============================================
+# Connector Definition
+# ============================================
+def define_connectors(model, assembly):
+    """Define connectors to simulate bolts"""
+    
+    if num_segments >= 2:
+        # Create reference points for connectors
+        create_connector_reference_points(assembly)
+        
+        # Create attachment points
+        create_attachment_points(assembly)
+        
+        # Create multipoint constraints
+        create_multipoint_constraints(model, assembly)
+        
+        # Create connector sections
+        create_connector_sections(model)
+        
+        # Create connector geometry
+        create_connector_geometry(assembly)
+        
+        # Assign connector sections
+        assign_connector_sections(assembly)
+
+def create_connector_reference_points(assembly):
+    """Create reference points for connectors"""
+    
+    for i in range(1, num_segments-1):
+        for j in range(num_bolts_vertical):
+            # Left bolt
+            e1 = assembly.instances['Part-'+str(i)].edges
+            assembly.ReferencePoint(point=assembly.instances['Part-'+str(i)].InterestingPoint(
+                edge=e1.findAt(coordinates=(-(bolt_distance+bolt_diameter/2), i*H-t2/2, (j+1)*(L/(num_bolts_vertical+1)))), rule=CENTER)
+            
+            e1 = assembly.instances['Part-'+str(i+1)].edges
+            assembly.ReferencePoint(point=assembly.instances['Part-'+str(i+1)].InterestingPoint(
+                edge=e1.findAt(coordinates=(-bolt_distance-bolt_diameter/2, i*H+t2/2, (j+1)*(L/(num_bolts_vertical+1)))), rule=CENTER)
+            
+            # Right bolt
+            e1 = assembly.instances['Part-'+str(i)].edges
+            assembly.ReferencePoint(point=assembly.instances['Part-'+str(i)].InterestingPoint(
+                edge=e1.findAt(coordinates=((bolt_distance+bolt_diameter/2), i*H-t2/2, (j+1)*(L/(num_bolts_vertical+1)))), rule=CENTER)
+            
+            e1 = assembly.instances['Part-'+str(i+1)].edges
+            assembly.ReferencePoint(point=assembly.instances['Part-'+str(i+1)].InterestingPoint(
+                edge=e1.findAt(coordinates=((bolt_distance+bolt_diameter/2), i*H+t2/2, (j+1)*(L/(num_bolts_vertical+1)))), rule=CENTER)
+
+def create_attachment_points(assembly):
+    """Create attachment points for connectors"""
+    
+    attachment_num = 1
+    for i in range(num_segments-1):
+        for j in range(num_bolts_vertical):
+            # Left bolt attachment points
+            assembly.AttachmentPoints(name='Attachment Points-'+str(attachment_num), 
+                points=((-bolt_distance, (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))),))
+            assembly.AttachmentPoints(name='Attachment Points-'+str(attachment_num+1), 
+                points=((-bolt_distance, (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))),))
+            
+            # Right bolt attachment points
+            assembly.AttachmentPoints(name='Attachment Points-'+str(attachment_num+2), 
+                points=((bolt_distance, (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))),))
+            assembly.AttachmentPoints(name='Attachment Points-'+str(attachment_num+3), 
+                points=((bolt_distance, (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))),))
+            
+            attachment_num += 4
+
+def create_multipoint_constraints(model, assembly):
+    """Create multipoint constraints for bolt connections"""
+    
+    rpn = 1
+    for i in range(num_segments-1):
+        for j in range(num_bolts_vertical):
+            # Left bolt constraints
+            v1 = assembly.vertices
+            verts1 = v1.findAt(((-bolt_distance, (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))),))
+            region1 = regionToolset.Region(vertices=verts1)
+            
+            f1 = assembly.instances['Part-'+str(i+1)].faces
+            faces1 = f1.findAt(((-bolt_distance-(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))+0.01),),
+                              ((-bolt_distance+(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))+0.01),),
+                              ((-bolt_distance-(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))-0.01),),
+                              ((-bolt_distance+(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))-0.01),))
+            region2 = regionToolset.Region(faces=faces1)
+            
+            model.MultipointConstraint(name='Constraint-'+str(rpn), controlPoint=region1,
+                                      surface=region2, mpcType=BEAM_MPC, userMode=DOF_MODE_MPC, userType=0, csys=None)
+            
+            # Left bolt upper constraints
+            v1 = assembly.vertices
+            verts1 = v1.findAt(((-bolt_distance, (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))),))
+            region1 = regionToolset.Region(vertices=verts1)
+            
+            f1 = assembly.instances['Part-'+str(i+2)].faces
+            faces1 = f1.findAt(((-bolt_distance-(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))+0.01),),
+                              ((-bolt_distance+(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))+0.01),),
+                              ((-bolt_distance-(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))-0.01),),
+                              ((-bolt_distance+(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))-0.01),))
+            region2 = regionToolset.Region(faces=faces1)
+            
+            model.MultipointConstraint(name='Constraint-'+str(rpn+1), controlPoint=region1,
+                                      surface=region2, mpcType=BEAM_MPC, userMode=DOF_MODE_MPC, userType=0, csys=None)
+            
+            # Right bolt constraints
+            v1 = assembly.vertices
+            verts1 = v1.findAt(((+bolt_distance, (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))),))
+            region1 = regionToolset.Region(vertices=verts1)
+            
+            f1 = assembly.instances['Part-'+str(i+1)].faces
+            faces1 = f1.findAt(((+bolt_distance-(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))+0.01),),
+                              ((+bolt_distance+(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))+0.01),),
+                              ((+bolt_distance-(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))-0.01),),
+                              ((+bolt_distance+(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1))-0.01),))
+            region2 = regionToolset.Region(faces=faces1)
+            
+            model.MultipointConstraint(name='Constraint-'+str(rpn+2), controlPoint=region1,
+                                      surface=region2, mpcType=BEAM_MPC, userMode=DOF_MODE_MPC, userType=0, csys=None)
+            
+            # Right bolt upper constraints
+            v1 = assembly.vertices
+            verts1 = v1.findAt(((+bolt_distance, (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))),))
+            region1 = regionToolset.Region(vertices=verts1)
+            
+            f1 = assembly.instances['Part-'+str(i+2)].faces
+            faces1 = f1.findAt(((+bolt_distance-(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))+0.01),),
+                              ((+bolt_distance+(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))+0.01),),
+                              ((+bolt_distance-(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))-0.01),),
+                              ((+bolt_distance+(bolt_diameter/2+(bolt_diameter/1.2-bolt_diameter/2)/2), (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))-0.01),))
+            region2 = regionToolset.Region(faces=faces1)
+            
+            model.MultipointConstraint(name='Constraint-'+str(rpn+3), controlPoint=region1,
+                                      surface=region2, mpcType=BEAM_MPC, userMode=DOF_MODE_MPC, userType=0, csys=None)
+            
+            rpn += 4
+
+def create_connector_sections(model):
+    """Create connector sections"""
+    
+    model.ConnectorSection(name='ConnSect-1', translationalType=CARTESIAN)
+    
+    # Update connector section with elastic behavior
+    elastic_0 = connectorBehavior.ConnectorElasticity(components=(2,), table=((
+        205000.0*3.1416*bolt_diameter*bolt_diameter/4/(2*t2),),))
+    model.sections['ConnSect-1'].setValues(behaviorOptions=(elastic_0,), 
+        u2ReferenceLength=(t2-bolt_preload/(205000.0*3.1416*bolt_diameter*bolt_diameter/4/(2*t2))))
+    model.sections['ConnSect-1'].behaviorOptions[0].ConnectorOptions()
+
+def create_connector_geometry(assembly):
+    """Create connector geometry"""
+    
+    for i in range(num_segments-1):
+        for j in range(num_bolts_vertical):
+            # Create wire for left bolt
+            v11 = assembly.vertices
+            assembly.WirePolyLine(points=((v11.findAt(coordinates=(bolt_distance, (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1)))),
+                                         v11.findAt(coordinates=(bolt_distance, (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))))),), 
+                                 mergeType=IMPRINT, meshable=OFF)
+            
+            # Create wire for right bolt
+            assembly.WirePolyLine(points=((v11.findAt(coordinates=(-bolt_distance, (i+1)*H-t2/2, (j+1)*(L/(num_bolts_vertical+1)))),
+                                         v11.findAt(coordinates=(-bolt_distance, (i+1)*H+t2/2, (j+1)*(L/(num_bolts_vertical+1))))),), 
+                                 mergeType=IMPRINT, meshable=OFF)
+
+def assign_connector_sections(assembly):
+    """Assign connector sections"""
+    
+    for i in range(num_segments-1):
+        for j in range(num_bolts_vertical):
+            # Assign section to left bolt
+            e1 = assembly.edges
+            edges1 = e1.findAt(((-bolt_distance, (i+1)*H, (j+1)*(L/(num_bolts_vertical+1))),))
+            region = regionToolset.Region(edges=edges1)
+            assembly.SectionAssignment(sectionName='ConnSect-1', region=region)
+            
+            # Assign section to right bolt
+            e1 = assembly.edges
+            edges1 = e1.findAt(((bolt_distance, (i+1)*H, (j+1)*(L/(num_bolts_vertical+1))),))
+            region = regionToolset.Region(edges=edges1)
+            assembly.SectionAssignment(sectionName='ConnSect-1', region=region)
+
+# ============================================
+# Step and Boundary Condition Definition
+# ============================================
+def define_steps_and_boundary_conditions(model, assembly):
+    """Define analysis steps and boundary conditions"""
+    
+    # Create smooth step amplitude
+    model.SmoothStepAmplitude(name='Amp-1', timeSpan=STEP, data=((0.0, 0.0), (1.0, 1.0)))
+    
+    # Create initial step
+    model.StaticStep(name='Step-1', previous='Initial', initialInc=0.00001, minInc=1e-06, maxInc=1.0)
+    
+    # Create boundary conditions
+    create_boundary_conditions(model, assembly)
+    
+    # Create buckle step
+    model.BuckleStep(name='Step-2', previous='Step-1', numEigen=10,
+                     eigensolver=LANCZOS, minEigen=None, blockSize=DEFAULT, maxBlocks=DEFAULT)
+    
+    # Create load step
+    model.StaticStep(name='Step-3', previous='Step-2')
+    
+    # Apply load
+    apply_load(model, assembly)
+    
+    # Modify boundary conditions for load step
+    modify_boundary_conditions(model)
+
+def create_boundary_conditions(model, assembly):
+    """Create boundary conditions"""
+    
+    # Create multipoint constraints for top and bottom surfaces
+    region1 = assembly.sets['TTpoint']
+    region2 = assembly.sets['Tsurface']
+    model.MultipointConstraint(name='BC-1', controlPoint=region1, surface=region2, 
+                              mpcType=BEAM_MPC, userMode=DOF_MODE_MPC, userType=0, csys=None)
+    
+    region1 = assembly.sets['BBpoint']
+    region2 = assembly.sets['Bsurface']
+    model.MultipointConstraint(name='BC-2', controlPoint=region1, surface=region2, 
+                              mpcType=BEAM_MPC, userMode=DOF_MODE_MPC, userType=0, csys=None)
+    
+    # Create displacement boundary conditions
+    region = assembly.sets['TTpoint']
+    model.DisplacementBC(name='BC-3', createStepName='Initial',
+                        region=region, u1=SET, u2=SET, u3=UNSET, ur1=SET, ur2=SET, ur3=SET,
+                        amplitude=UNSET, distributionType=UNIFORM, fieldName='', localCsys=None)
+    
+    region = assembly.sets['BBpoint']
+    model.DisplacementBC(name='BC-4', createStepName='Initial',
+                        region=region, u1=SET, u2=SET, u3=SET, ur1=SET, ur2=SET, ur3=SET,
+                        amplitude=UNSET, distributionType=UNIFORM, fieldName='', localCsys=None)
+
+def apply_load(model, assembly):
+    """Apply load to the model"""
+    
+    region = assembly.sets['TTpoint']
+    model.ConcentratedForce(name='Load-1', createStepName='Step-3',
+                          region=region, cf1=load_x, cf2=load_y, cf3=load_z, 
+                          distributionType=UNIFORM, field='', localCsys=None)
+
+def modify_boundary_conditions(model):
+    """Modify boundary conditions for load step"""
+    
+    # Modify boundary conditions based on load components
+    if load_x != 0:
+        model.boundaryConditions['BC-3'].setValuesInStep(stepName='Step-3', u1=FREED, 
+                                                        buckleCase=PERTURBATION_AND_BUCKLING)
+    if load_y != 0:
+        model.boundaryConditions['BC-3'].setValuesInStep(stepName='Step-3', u2=FREED, 
+                                                        buckleCase=PERTURBATION_AND_BUCKLING)
+
+# ============================================
+# Job Creation and Execution
+# ============================================
+def create_and_run_job(model):
+    """Create and run the analysis job"""
+    
+    # Create job
+    job = mdb.Job(name='Job-1', model='Model-1', description='', type=ANALYSIS,
+                 atTime=None, waitMinutes=0, waitHours=0, queue=None, memory=96,
+                 memoryUnits=PERCENTAGE, getMemoryFromAnalysis=True,
+                 explicitPrecision=SINGLE, nodalOutputPrecision=SINGLE, echoPrint=OFF,
+                 modelPrint=OFF, contactPrint=OFF, historyPrint=OFF, userSubroutine='',
+                 scratch='', resultsFormat=ODB, multiprocessingMode=THREADS, numCpus=16,
+                 numDomains=16, numGPUs=0)
+    
+    # Submit job
+    job.submit(consistencyChecking=OFF)
+    job.waitForCompletion()
+    
+    return job.name
+
+# ============================================
+# Result Processing
+# ============================================
+def process_results(job_name):
+    """Process and visualize the analysis results"""
+    
+    # Open the output database
+    odb_path = os.path.join(os.getcwd(), job_name + '.odb')
+    odb = session.openOdb(name=odb_path)
+    
+    # Set up viewport for visualization
+    session.viewports['Viewport: 1'].setValues(displayedObject=odb)
+    session.viewports['Viewport: 1'].makeCurrent()
+    session.viewports['Viewport: 1'].odbDisplay.display.setValues(plotState=(CONTOURS_ON_DEF,))
+    
+    # Write field report
+    session.writeFieldReport(
+        fileName=os.path.join(output_dir, 'Elasticdata_' + analysis_id + '.csv'),
+        append=OFF, sortItem='Node Number', odb=odb, step=1, frame=1,
+        outputPosition=NODAL, variable=(('U', NODAL), ('UR', NODAL),), stepFrame=SPECIFY)
+    
+    # Set up visualization options
+    session.graphicsOptions.setValues(backgroundStyle=SOLID, backgroundColor='#FFFFFF')
+    session.viewports['Viewport: 1'].viewportAnnotationOptions.setValues(
+        triadPosition=(8, 9), legendBox=ON, legendPosition=(2, 98), title=ON,
+        statePosition=(13, 12), annotations=ON, compass=ON,
+        triadFont='-*-verdana-bold-r-normal-*-*-120-*-*-p-*',
+        stateFont='-*-verdana-medium-r-normal-*-*-120-*-*-p-*',
+        titleFont='-*-verdana-medium-r-normal-*-*-120-*-*-p-*',
+        legendFont='-*-verdana-medium-r-normal-*-*-120-*-*-p-*')
+    
+    # Set view
+    session.viewports['Viewport: 1'].view.setValues(nearPlane=1000, farPlane=1001, 
+                                                  width=1000, height=1000, 
+                                                  cameraPosition=(L+num_segments*H, -num_segments*H, L*1.5), 
+                                                  cameraUpVector=(0, 0, 50),
+                                                  cameraTarget=(0, num_segments*H/2, L/2), 
+                                                  viewOffsetX=0, viewOffsetY=0)
+    session.viewports['Viewport: 1'].view.fitView()
+    
+    # Save image
+    session.printToFile(
+        fileName=os.path.join(output_dir, 'Elastic_' + analysis_id + '.tiff'),
+        format=TIFF, canvasObjects=(session.viewports['Viewport: 1'],))
+    
+    # Save model
+    mdb.saveAs(pathName=os.path.join(analysis_dir, 'Elastic'))
+
+# ============================================
+# Main Function
+# ============================================
+def main():
+    """Main function to run the analysis"""
+    
+    print("Starting bolted connection analysis...")
+    
+    # Create model
+    model = create_model()
+    print("Model created.")
+    
+    # Create geometry
+    part, part_copy = create_geometry(model)
+    print("Geometry created.")
+    
+    # Create bolt holes
+    create_bolt_holes(part, part_copy)
+    print("Bolt holes created.")
+    
+    # Define materials and sections
+    define_materials_and_sections(model)
+    print("Materials and sections defined.")
+    
+    # Assign sections
+    assign_sections(part, part_copy)
+    print("Sections assigned.")
+    
+    # Create assembly
+    create_assembly(model)
+    print("Assembly created.")
+    
+    # Create sets
+    create_sets(model.rootAssembly)
+    print("Sets created.")
+    
+    # Create mesh
+    create_mesh(part, part_copy)
+    print("Mesh created.")
+    
+    # Define contact
+    define_contact(model)
+    print("Contact defined.")
+    
+    # Define connectors
+    define_connectors(model, model.rootAssembly)
+    print("Connectors defined.")
+    
+    # Define steps and boundary conditions
+    define_steps_and_boundary_conditions(model, model.rootAssembly)
+    print("Steps and boundary conditions defined.")
+    
+    # Create and run job
+    job_name = create_and_run_job(model)
+    print(f"Job {job_name} completed.")
+    
+    # Process results
+    process_results(job_name)
+    print("Results processed.")
+    
+    print("Analysis completed successfully!")
+
+if __name__ == "__main__":
+    main
