@@ -1,0 +1,3 @@
+id,hSeg,nSeg,bFlange,tWeb,tFlangeSingle,Lmember,fy_web,fu_web,eps_u_web,E_web,fy_flg,fu_flg,eps_u_flg,E_flg,imperfAmp,meshSize,numEigen,enableCases,description
+G1_Actual,900,1,202.83,6.31,20.80,880.0,247.8,352.5,0.234,210184.0,292.2,474.3,0.200,211551.0,2.71,15.0,10,LC4_ShearY,G1 ACTUAL: Quick-start example - Scandella et al. (2020) reference specimen
+

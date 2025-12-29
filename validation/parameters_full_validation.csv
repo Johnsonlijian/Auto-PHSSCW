@@ -1,0 +1,6 @@
+id,hSeg,nSeg,bFlange,tWeb,tFlangeSingle,Lmember,fy_web,fu_web,eps_u_web,E_web,fy_flg,fu_flg,eps_u_flg,E_flg,imperfAmp,meshSize,numEigen,enableCases,description
+G1_Actual,900,1,202.83,6.31,20.80,880.0,247.8,352.5,0.234,210184.0,292.2,474.3,0.200,211551.0,2.71,15.0,10,LC4_ShearY,G1 ACTUAL: Measured geometry (Table 2) + 0.2% offset yield (Table 3) + max imperfection amplitude
+G2_Actual,900,1,202.78,4.24,20.70,880.0,312.8,423.8,0.208,210658.0,292.2,474.3,0.200,211551.0,1.93,15.0,10,LC4_ShearY,G2 ACTUAL: Measured geometry + 0.2% offset yield. Slender web 4mm plate + Flange 20mm plate
+G3_Actual,900,1,202.78,6.18,20.67,1320.0,247.8,352.5,0.234,210184.0,292.2,474.3,0.200,211551.0,2.08,15.0,10,LC4_ShearY,G3 ACTUAL: Measured geometry + 0.2% offset yield. Wide panel a=1320mm. Web 6mm + Flange 20mm
+G4_Actual,900,1,201.27,6.18,25.55,875.0,247.8,352.5,0.234,210184.0,207.1,376.9,0.224,211990.0,1.94,15.0,10,LC4_ShearY,G4 ACTUAL: Measured geometry + 0.2% offset yield. Stiff flanges 25mm. Web 6mm + Flange 25mm plate
+

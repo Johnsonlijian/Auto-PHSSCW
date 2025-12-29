@@ -1,0 +1,33 @@
+======================================================================
+Multi-Case Analysis Summary
+======================================================================
+
+Model: H900_b202_t6_L880
+Geometry:
+  H_total = 900.00 mm
+  bFlange = 202.83 mm
+  tWeb = 6.31 mm
+  tFlange = 20.80 mm
+  Lmember = 880.00 mm
+  nSeg = 1
+
+Material:
+  Web: E=210184.0 MPa, fy=247.80 MPa, fu=352.50 MPa, eps_u=0.234
+  Flange: E=211551.0 MPa, fy=292.20 MPa, fu=474.30 MPa, eps_u=0.200
+
+Imperfection: mode=1 (FIXED), amp=2.71 mm
+
+Load Cases:
+  LC4_ShearY:
+    Description: Pure Shear-Y
+    Buckling Ref: Fx=0.00, Fy=1.00, Fz=0.00
+    Riks Control: DOF=2, dir=Y, maxDisp=60.0 mm, sign=1
+
+Analysis Results:
+----------------------------------------------------------------------
+Case                           Max_U (mm)      Max_RF (N)         Max_LPF
+----------------------------------------------------------------------
+LC4_ShearY                        63.0257       703865.12          1.0504
+----------------------------------------------------------------------
+
+Analysis completed at: 2025-12-26 14:43:23
